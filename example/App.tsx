@@ -56,7 +56,7 @@ interface SimulatedResponse {
   answer: string;
 }
 
-const RESPONSES: Record<"code" | "general" | "simple", SimulatedResponse> = {
+const RESPONSES: Record<"code" | "general" | "simple" | "stress", SimulatedResponse> = {
   code: {
     reasoning: [
       "The user wants a debounce hook in TypeScript, so it should be generic over the value type.",
@@ -112,6 +112,29 @@ const RESPONSES: Record<"code" | "general" | "simple", SimulatedResponse> = {
       "Read more in [Nielsen Norman Group's guide to response times](https://www.nngroup.com/articles/response-times-3-important-limits/).",
     ].join("\n"),
   },
+  stress: {
+    reasoning: "Real model output is messy. Exercise tables, task lists, tildes, images, raw HTML and a broken link, and make sure nothing half-written ever shows up raw.",
+    answer: [
+      "### Framework comparison",
+      "",
+      "| Framework | Bundle | Streaming |",
+      "| :--- | ---: | :---: |",
+      "| **shadcn-ai-native** | 0 deps | ✅ |",
+      "| Other kit | ~~40 kB~~ 38 kB | partial |",
+      "",
+      "- [x] Tables with alignment",
+      "- [x] Task lists",
+      "- [ ] Footnotes (not supported)",
+      "",
+      "~~~bash",
+      "npx expo start --no-dev --minify",
+      "~~~",
+      "",
+      "<details>Raw HTML stays literal text</details>",
+      "",
+      "An image: ![React Native logo](https://reactnative.dev/img/header_logo.svg), an autolink <https://expo.dev> and a broken one: [docs](https://exa mple.com",
+    ].join("\n"),
+  },
   simple: {
     answer: [
       "Imagine a backpack 🎒",
@@ -124,6 +147,7 @@ const RESPONSES: Record<"code" | "general" | "simple", SimulatedResponse> = {
 };
 
 function pickResponse(prompt: string, codeShown: boolean): SimulatedResponse {
+  if (/stress|messy|markdown|table/i.test(prompt)) return RESPONSES.stress;
   if (/simpl|eli5|like i'?m/i.test(prompt)) return RESPONSES.simple;
   if (/hook|code|typescript|function|snippet|write|debounce|component/i.test(prompt) || !codeShown) {
     return RESPONSES.code;
@@ -156,7 +180,8 @@ interface Message {
 const SUGGESTIONS: ActionChip[] = [
   { id: "s1", label: "Write a debounce hook in TypeScript" },
   { id: "s2", label: "Why does streaming feel faster?" },
-  { id: "s3", label: "Explain closures simply" },
+  { id: "s3", label: "Stress-test the Markdown" },
+  { id: "s4", label: "Explain closures simply" },
 ];
 
 /* -------------------------------------------------------------------------------------------------
