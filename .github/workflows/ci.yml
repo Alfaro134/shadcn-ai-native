@@ -53,5 +53,9 @@ jobs:
       # SECURITY.md); fail on high or critical ones.
       - run: npm audit --audit-level=high
         working-directory: example
+      # The Expo SDK pins exact versions of React, React Native, Reanimated and Worklets; in Expo
+      # Go a mismatch breaks the app at runtime even when the types check out.
+      - run: npx expo install --check
+        working-directory: example
       - run: npx tsc --noEmit
         working-directory: example
