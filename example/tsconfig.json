@@ -1,0 +1,11 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    // ../components has no node_modules of its own; resolve its imports from this app.
+    "paths": {
+      "*": ["./node_modules/@types/*", "./node_modules/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../components/**/*.tsx", "nativewind-env.d.ts", "css.d.ts"]
+}
