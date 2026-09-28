@@ -20,19 +20,13 @@ updates:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
 
-  # The example app. Expo SDK upgrades are done by hand with `npx expo install --fix`, since the
-  # SDK pins compatible versions of React Native and its libraries.
+  # The example app: no version-update PRs. The Expo SDK pins exact, mutually compatible versions
+  # (React, React Native, Reanimated, Worklets, and Tailwind 3 for NativeWind v4), and in Expo Go
+  # the native side of Reanimated/Worklets is fixed, so a JS-only bump breaks the app at runtime.
+  # Upgrade with `npx expo install --fix` when moving to a new SDK. Dependabot *security* updates
+  # (enabled in the repo settings) still open PRs here.
   - package-ecosystem: npm
     directory: /example
     schedule:
       interval: weekly
-    ignore:
-      - dependency-name: "expo*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "react-native*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: "react"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      # The Expo SDK pins the supported TypeScript major.
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 0
