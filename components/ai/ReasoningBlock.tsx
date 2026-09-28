@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import { I18nManager, Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -31,6 +31,30 @@ const GROW_DURATION_MS = 160;
  * Types
  * -----------------------------------------------------------------------------------------------*/
 
+/** Every string the block shows or announces. Override them to translate the component. */
+export interface ReasoningBlockLabels {
+  /** Header while reasoning streams. */
+  thinking: string;
+  /** Header when finished and timed. Receives whole seconds (≥ 1), so you can pluralize. */
+  thoughtFor: (seconds: number) => string;
+  /** Header when finished in under a second. */
+  thoughtBriefly: string;
+  /** Header when finished but never timed (e.g. history without `duration`). */
+  reasoning: string;
+  /** Screen-reader hints for the toggle. */
+  expandHint: string;
+  collapseHint: string;
+}
+
+const DEFAULT_LABELS: ReasoningBlockLabels = {
+  thinking: "Thinking…",
+  thoughtFor: (seconds) => `Thought for ${seconds} second${seconds === 1 ? "" : "s"}`,
+  thoughtBriefly: "Thought for a moment",
+  reasoning: "Reasoning",
+  expandHint: "Shows the reasoning",
+  collapseHint: "Hides the reasoning",
+};
+
 export interface ReasoningBlockProps {
   /** The model's thought process so far. Rendered as plain text unless `children` is given. */
   content: string;
@@ -45,8 +69,10 @@ export interface ReasoningBlockProps {
   defaultOpen?: boolean;
   /** Collapse automatically when streaming ends, unless the user toggled it. Default `true`. */
   autoCollapse?: boolean;
-  /** Override the header text, e.g. "Chain of thought". */
+  /** Override the header text entirely, e.g. "Chain of thought". */
   label?: string;
+  /** Translated strings. Anything omitted falls back to English. */
+  labels?: Partial<ReasoningBlockLabels>;
   /** Custom body, e.g. a Markdown renderer. Replaces the plain `content` text. */
   children?: React.ReactNode;
   /** Extra classes merged onto the outer container. */
@@ -61,13 +87,22 @@ function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
 
-function headerLabel(isStreaming: boolean, seconds: number | undefined, label: string | undefined): string {
+function headerLabel(
+  isStreaming: boolean,
+  seconds: number | undefined,
+  label: string | undefined,
+  labels: ReasoningBlockLabels,
+): string {
   if (label) return label;
-  if (isStreaming) return "Thinking…";
-  if (seconds === undefined) return "Reasoning";
-  if (seconds < 1) return "Thought for a moment";
-  return `Thought for ${seconds} second${seconds === 1 ? "" : "s"}`;
+  if (isStreaming) return labels.thinking;
+  if (seconds === undefined) return labels.reasoning;
+  if (seconds < 1) return labels.thoughtBriefly;
+  return labels.thoughtFor(seconds);
 }
+
+/** Collapsed, the chevron points toward the reading direction; expanded, it points down. */
+const CHEVRON_COLLAPSED_DEG = I18nManager.isRTL ? 135 : -45;
+const CHEVRON_EXPANDED_DEG = 45;
 
 /* -------------------------------------------------------------------------------------------------
  * Sub-components
@@ -107,9 +142,11 @@ function ReasoningBlockImpl({
   defaultOpen,
   autoCollapse = true,
   label,
+  labels: labelOverrides,
   children,
   className,
 }: ReasoningBlockProps) {
+  const labels = { ...DEFAULT_LABELS, ...labelOverrides };
   const [open, setOpen] = useState(defaultOpen ?? isStreaming);
   const userToggled = useRef(false);
 
@@ -163,13 +200,12 @@ function ReasoningBlockImpl({
     opacity: progress.value,
   }));
   const chevronStyle = useAnimatedStyle(() => ({
-    // -45° points right (collapsed); 45° points down (expanded).
-    transform: [{ rotate: `${-45 + progress.value * 90}deg` }],
+    transform: [{ rotate: `${CHEVRON_COLLAPSED_DEG + (CHEVRON_EXPANDED_DEG - CHEVRON_COLLAPSED_DEG) * progress.value}deg` }],
   }));
   const pulseStyle = useThinkingPulse(isStreaming);
 
   const seconds = duration ?? measuredSeconds;
-  const title = headerLabel(isStreaming, seconds === undefined ? undefined : Math.max(0, Math.round(seconds)), label);
+  const title = headerLabel(isStreaming, seconds === undefined ? undefined : Math.max(0, Math.round(seconds)), label, labels);
 
   return (
     <View className={cx(theme.container, className)}>
@@ -178,7 +214,7 @@ function ReasoningBlockImpl({
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={title}
-        accessibilityHint={open ? "Hides the reasoning" : "Shows the reasoning"}
+        accessibilityHint={open ? labels.collapseHint : labels.expandHint}
         accessibilityState={{ expanded: open, busy: isStreaming }}
         className={theme.header}
       >

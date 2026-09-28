@@ -49,6 +49,32 @@ const COPIED_RESET_MS = 2000;
  * Types
  * -----------------------------------------------------------------------------------------------*/
 
+/** Every string the block shows or announces. Override them to translate the component. */
+export interface CodeBlockLabels {
+  /** Header label when no language is given. */
+  code: string;
+  copy: string;
+  copied: string;
+  /** Badge while the fence is still streaming. */
+  writing: string;
+  /** Badge when the block is too large to highlight and renders as plain text. */
+  plain: string;
+  /** Screen-reader label of the copy button. */
+  copyAction: (language: string) => string;
+  /** Announced after copying. */
+  copiedAnnouncement: string;
+}
+
+const DEFAULT_LABELS: CodeBlockLabels = {
+  code: "code",
+  copy: "Copy",
+  copied: "Copied",
+  writing: "writing…",
+  plain: "plain text",
+  copyAction: (language) => `Copy ${language} to clipboard`,
+  copiedAnnouncement: "Code copied to clipboard",
+};
+
 export interface CodeBlockProps {
   /** Raw source code. Trailing newlines are trimmed for display only. */
   code: string;
@@ -56,8 +82,18 @@ export interface CodeBlockProps {
   language?: string;
   /** Render a gutter with line numbers. */
   showLineNumbers?: boolean;
-  /** Color keywords, strings, comments, numbers, calls and types. Defaults to true. */
+  /**
+   * Color keywords, strings, comments, numbers, calls and types. Defaults to true. Best-effort:
+   * a small regex highlighter tuned for JS/TS/JSON, Python and shell, with a generic fallback.
+   */
   highlight?: boolean;
+  /**
+   * Above this many characters highlighting is skipped (one nested <Text> per token gets
+   * expensive) and the header shows a "plain text" badge. Default 20,000.
+   */
+  maxHighlightChars?: number;
+  /** Translated strings. Anything omitted falls back to English. */
+  labels?: Partial<CodeBlockLabels>;
   /** True while the fence is still being streamed in (shows a subtle badge). */
   isStreaming?: boolean;
   /** Called after the code was written to the clipboard. */
@@ -164,7 +200,7 @@ function grammarFor(language?: string): Grammar {
 const CALL_LOOKAHEAD = /[ \t]*(?:<[\w ,.[\]|&]{0,64}>[ \t]*)?\(/y;
 const UPPERCASE_START = /^[A-Z]/;
 
-/** Above this size, highlighting is skipped: one nested <Text> per token gets expensive. */
+/** Default size above which highlighting is skipped: one nested <Text> per token gets expensive. */
 const MAX_HIGHLIGHT_CHARS = 20_000;
 
 function tokenize(code: string, grammar: Grammar): Token[] {
@@ -250,10 +286,13 @@ function CodeBlockImpl({
   language,
   showLineNumbers = false,
   highlight = true,
+  maxHighlightChars = MAX_HIGHLIGHT_CHARS,
   isStreaming = false,
   onCopy,
+  labels: labelOverrides,
   className,
 }: CodeBlockProps) {
+  const labels = { ...DEFAULT_LABELS, ...labelOverrides };
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
@@ -264,10 +303,10 @@ function CodeBlockImpl({
     const count = displayCode.split("\n").length;
     return Array.from({ length: count }, (_, i) => String(i + 1)).join("\n");
   }, [displayCode, showLineNumbers]);
+  const tooLarge = highlight && displayCode.length > maxHighlightChars;
   const tokens = useMemo(
-    () =>
-      highlight && displayCode.length <= MAX_HIGHLIGHT_CHARS ? tokenize(displayCode, grammarFor(language)) : null,
-    [displayCode, language, highlight],
+    () => (highlight && !tooLarge ? tokenize(displayCode, grammarFor(language)) : null),
+    [displayCode, language, highlight, tooLarge],
   );
 
   useEffect(() => {
@@ -287,11 +326,11 @@ function CodeBlockImpl({
     // The clipboard write is async: don't start a timer for a block that has since unmounted.
     if (!mounted.current) return;
     setCopied(true);
-    AccessibilityInfo.announceForAccessibility("Code copied to clipboard");
+    AccessibilityInfo.announceForAccessibility(labels.copiedAnnouncement);
     onCopy?.(displayCode);
     if (resetTimer.current) clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
-  }, [displayCode, onCopy]);
+  }, [displayCode, onCopy, labels.copiedAnnouncement]);
 
   return (
     <View className={cx(theme.container, className)}>
@@ -299,22 +338,23 @@ function CodeBlockImpl({
         <View className={theme.headerLeft}>
           <View className={theme.languageDot} />
           <Text className={theme.language} numberOfLines={1}>
-            {language || "code"}
+            {language || labels.code}
           </Text>
-          {isStreaming ? <Text className={theme.streamingBadge}>writing…</Text> : null}
+          {isStreaming ? <Text className={theme.streamingBadge}>{labels.writing}</Text> : null}
+          {tooLarge && !isStreaming ? <Text className={theme.streamingBadge}>{labels.plain}</Text> : null}
         </View>
 
         <Pressable
           onPress={handleCopy}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel={copied ? "Code copied" : `Copy ${language || "code"} to clipboard`}
+          accessibilityLabel={copied ? labels.copied : labels.copyAction(language || labels.code)}
           className={theme.copyButton}
         >
           <Animated.View key={copied ? "check" : "copy"} entering={ZoomIn.duration(180)} exiting={ZoomOut.duration(120)}>
             {copied ? <CheckIcon /> : <CopyIcon />}
           </Animated.View>
-          <Text className={copied ? theme.copiedLabel : theme.copyLabel}>{copied ? "Copied" : "Copy"}</Text>
+          <Text className={copied ? theme.copiedLabel : theme.copyLabel}>{copied ? labels.copied : labels.copy}</Text>
         </Pressable>
       </View>
 

@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Dimensions,
+  Keyboard,
+  Platform,
   Pressable,
   TextInput,
   useWindowDimensions,
@@ -11,7 +14,9 @@ import {
 import Animated, {
   Easing,
   useAnimatedKeyboard,
+  useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withSpring,
   withTiming,
@@ -57,6 +62,74 @@ const BUTTON_HIT_SLOP = 4;
  * Types
  * -----------------------------------------------------------------------------------------------*/
 
+/** Every string the input shows or announces. Override them to translate the component. */
+export interface DynamicPromptInputLabels {
+  placeholder: string;
+  attach: string;
+  send: string;
+  stop: string;
+}
+
+const DEFAULT_LABELS: DynamicPromptInputLabels = {
+  placeholder: "Message",
+  attach: "Attach file",
+  send: "Send message",
+  stop: "Stop generating",
+};
+
+/** The keyboard's current height in px, readable on the UI thread (a Reanimated shared/derived value). */
+export interface KeyboardHeight {
+  readonly value: number;
+}
+
+const KEYBOARD_FALLBACK_TIMING = { duration: 220, easing: Easing.out(Easing.cubic) };
+
+/**
+ * Default keyboard source: Reanimated's `useAnimatedKeyboard`, which follows the keyboard frame
+ * by frame and works in Expo Go with no extra native module. Reanimated 4 deprecates it in favor
+ * of react-native-keyboard-controller; for production apps with a dev build, pass a
+ * keyboard-controller hook as `useKeyboardHeight`.
+ *
+ * On older Android versions (verified on Android 9 in Expo Go) the system never delivers the
+ * inset animation and `useAnimatedKeyboard` stays at 0. Until it reports a real height, this falls
+ * back to React Native's Keyboard events, which fire everywhere (eased, not frame-synced).
+ */
+export function useReanimatedKeyboardHeight(): KeyboardHeight {
+  const animated = useAnimatedKeyboard().height;
+  const fallback = useSharedValue(0);
+  const animatedWorks = useSharedValue(false);
+
+  useAnimatedReaction(
+    () => animated.value,
+    (height) => {
+      if (height > 0) animatedWorks.value = true;
+    },
+  );
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const show = Keyboard.addListener(showEvent, (event) => {
+      // Android apps draw edge-to-edge (mandatory from SDK 54), down under the navigation bar, but
+      // the event's `height` leaves that bar out. Measure from the keyboard's top edge instead.
+      const height =
+        Platform.OS === "android"
+          ? Dimensions.get("screen").height - event.endCoordinates.screenY
+          : event.endCoordinates.height;
+      fallback.value = withTiming(Math.max(0, height), KEYBOARD_FALLBACK_TIMING);
+    });
+    const hide = Keyboard.addListener(hideEvent, () => {
+      fallback.value = withTiming(0, KEYBOARD_FALLBACK_TIMING);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [fallback]);
+
+  return useDerivedValue(() => (animatedWorks.value ? animated.value : fallback.value));
+}
+
 export interface DynamicPromptInputProps {
   /** Controlled value. Omit to let the component manage its own text. */
   value?: string;
@@ -70,7 +143,10 @@ export interface DynamicPromptInputProps {
   /** Swaps the send button for a stop button. */
   isGenerating?: boolean;
   disabled?: boolean;
+  /** Shortcut for `labels.placeholder`. */
   placeholder?: string;
+  /** Translated strings. Anything omitted falls back to English. */
+  labels?: Partial<DynamicPromptInputLabels>;
   /** Height of one line, in px. */
   minHeight?: number;
   /**
@@ -91,6 +167,13 @@ export interface DynamicPromptInputProps {
   keyboardOffset?: number;
   /** Set to false if a parent already handles keyboard avoidance. */
   avoidKeyboard?: boolean;
+  /**
+   * Hook that returns the keyboard height as a shared value. Defaults to
+   * `useReanimatedKeyboardHeight`. It is called as a hook, so pass a stable function (defined at
+   * module level) and never switch it between renders. See the README for a
+   * react-native-keyboard-controller adapter.
+   */
+  useKeyboardHeight?: () => KeyboardHeight;
   /** Rendered above the input row, e.g. <ActionChips /> or attachment previews. */
   accessory?: React.ReactNode;
   /** Escape hatch for any other TextInput prop (e.g. `maxLength`). */
@@ -141,12 +224,14 @@ export function DynamicPromptInput({
   onAttach,
   isGenerating = false,
   disabled = false,
-  placeholder = "Message",
+  placeholder,
+  labels: labelOverrides,
   minHeight = 40,
   maxHeight = 160,
   bottomInset = 0,
   keyboardOffset = 0,
   avoidKeyboard = true,
+  useKeyboardHeight = useReanimatedKeyboardHeight,
   accessory,
   inputProps,
   className,
@@ -154,11 +239,15 @@ export function DynamicPromptInput({
   const isControlled = value !== undefined;
   const [innerValue, setInnerValue] = useState("");
   const text = isControlled ? value : innerValue;
+  const labels = { ...DEFAULT_LABELS, ...labelOverrides, ...(placeholder !== undefined ? { placeholder } : null) };
 
-  // Latest text, readable synchronously. Guards against a double tap sending twice before the
-  // cleared value has re-rendered.
+  // Latest text, readable synchronously from event handlers. Guards against a double tap sending
+  // twice before the cleared value has re-rendered. Written only in handlers and effects, never
+  // during render, so it stays correct under concurrent rendering.
   const textRef = useRef(text);
-  textRef.current = text;
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
 
   const { height: windowHeight } = useWindowDimensions();
   const effectiveMax = Math.max(minHeight, Math.min(maxHeight, Math.round(windowHeight * MAX_WINDOW_FRACTION)));
@@ -170,9 +259,7 @@ export function DynamicPromptInput({
 
   // Tracks the keyboard frame by frame on the UI thread on both platforms, including Android
   // edge-to-edge (mandatory from SDK 54), where KeyboardAvoidingView is unreliable.
-  // Reanimated 4 marks this hook deprecated in favor of react-native-keyboard-controller; it is
-  // still fully supported and keeps this file free of extra native dependencies.
-  const keyboard = useAnimatedKeyboard();
+  const keyboardHeight = useKeyboardHeight();
 
   const canSend = text.trim().length > 0 && !disabled;
   const mode: "send" | "stop" = isGenerating ? "stop" : "send";
@@ -230,7 +317,7 @@ export function DynamicPromptInput({
   const buttonStyle = useAnimatedStyle(() => ({ transform: [{ scale: buttonScale.value }] }));
 
   const keyboardSpacerStyle = useAnimatedStyle(() => ({
-    height: avoidKeyboard ? Math.max(keyboard.height.value - keyboardOffset, bottomInset) : bottomInset,
+    height: avoidKeyboard ? Math.max(keyboardHeight.value - keyboardOffset, bottomInset) : bottomInset,
   }));
 
   return (
@@ -244,7 +331,7 @@ export function DynamicPromptInput({
             disabled={disabled}
             hitSlop={BUTTON_HIT_SLOP}
             accessibilityRole="button"
-            accessibilityLabel="Attach file"
+            accessibilityLabel={labels.attach}
             accessibilityState={{ disabled }}
             className={theme.attachButton}
           >
@@ -262,11 +349,11 @@ export function DynamicPromptInput({
               multiline
               editable={!disabled}
               scrollEnabled={scrollEnabled}
-              placeholder={placeholder}
+              placeholder={labels.placeholder}
               placeholderTextColor={theme.placeholderColor}
               selectionColor={theme.selectionColor}
               textAlignVertical="top"
-              accessibilityLabel={inputProps?.accessibilityLabel ?? placeholder}
+              accessibilityLabel={inputProps?.accessibilityLabel ?? labels.placeholder}
               className={theme.input}
               style={{ height: "100%" }}
             />
@@ -285,7 +372,7 @@ export function DynamicPromptInput({
             disabled={!actionEnabled}
             hitSlop={BUTTON_HIT_SLOP}
             accessibilityRole="button"
-            accessibilityLabel={mode === "stop" ? "Stop generating" : "Send message"}
+            accessibilityLabel={mode === "stop" ? labels.stop : labels.send}
             accessibilityState={{ disabled: !actionEnabled }}
             className={actionEnabled ? theme.actionButton.enabled : theme.actionButton.disabled}
           >
