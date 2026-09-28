@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Raw screen recording (only demo.gif is committed)
 demo.mp4
+
+# JetBrains IDE settings
+.idea/
