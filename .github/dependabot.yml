@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Pinned action SHAs in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Dev tooling at the repo root (ESLint, TypeScript).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-tooling:
+        patterns: ["*"]
+
+  # The example app. Expo SDK upgrades are done by hand with `npx expo install --fix`, since the
+  # SDK pins compatible versions of React Native and its libraries.
+  - package-ecosystem: npm
+    directory: /example
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "expo*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-native*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

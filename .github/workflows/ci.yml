@@ -5,29 +5,53 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token: CI never needs to write to the repo.
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to full commit SHAs (tags can be moved); Dependabot keeps them updated.
 jobs:
-  test:
-    name: Parser tests
+  check:
+    name: Lint, test, bench
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
       - run: npm test
       - run: npm run bench
 
   typecheck:
-    name: Type check
+    name: Type check the example app
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: example/package-lock.json
       - run: npm ci
+        working-directory: example
+      # Expo's build tooling carries moderate advisories that only upstream can fix (see
+      # SECURITY.md); fail on high or critical ones.
+      - run: npm audit --audit-level=high
         working-directory: example
       - run: npx tsc --noEmit
         working-directory: example
