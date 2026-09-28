@@ -35,6 +35,8 @@ You end up rebuilding the same four components in every project, and they rarely
 ## ✨ Features
 
 - 🌊 **Smooth streaming.** Bubbles ease into their new height on every chunk, so the text grows without jumps. There's a blinking caret while tokens arrive and a typing indicator before the first one.
+- 📝 **Streaming-safe Markdown, zero dependencies.** Headings, bullet and numbered lists, blockquotes, links, `**bold**`, `*italic*`, `` `code` `` and horizontal rules. While a reply streams, half-written markup never flashes: `**bold te` shows as `bold te` and `[Google](http…` shows as `Google` until the closing marker arrives. The parser is a linear scan with no backtracking regex, so it is ReDoS-safe.
+- 🧠 **Reasoning block.** A collapsible "Thinking…" / "Thought for 4 seconds" accordion for reasoning models, animated with Reanimated.
 - 🎨 **Built-in syntax highlighting.** A small regex highlighter colors keywords, strings, comments, numbers, function calls and types for JS/TS, Python, shell and more. **No highlighting library** needed.
 - 📋 **One-tap copy.** Code blocks copy to the clipboard with an animated ✓ confirmation.
 - ⌨️ **Keyboard handling on both platforms.** The prompt input follows the keyboard frame by frame on the UI thread, including on Android edge-to-edge.
@@ -49,7 +51,8 @@ You end up rebuilding the same four components in every project, and they rarely
 
 | Component | What it does |
 | --- | --- |
-| [`StreamingChatBubble`](./components/ai/StreamingChatBubble.tsx) | User/assistant message bubble with smooth streaming growth, `**bold**`, `` `inline code` `` and ```` ``` ```` fenced code rendered as `<CodeBlock />`. |
+| [`StreamingChatBubble`](./components/ai/StreamingChatBubble.tsx) | User/assistant message bubble with smooth streaming growth and streaming-safe Markdown: headings, lists, blockquotes, links, bold/italic, inline code and ```` ``` ```` fences rendered as `<CodeBlock />`. Optional `header` and `footer` slots. |
+| [`ReasoningBlock`](./components/ai/ReasoningBlock.tsx) | Collapsible "Thinking…" accordion for a model's reasoning. Times itself while streaming, then collapses to "Thought for N seconds". Pass it as the bubble's `header`. |
 | [`CodeBlock`](./components/ai/CodeBlock.tsx) | Dark code block with language header, syntax highlighting, horizontal scroll, optional line numbers and copy-to-clipboard. |
 | [`DynamicPromptInput`](./components/ai/DynamicPromptInput.tsx) | Chat input with auto-grow, keyboard avoidance, attach button and a Send ⇄ Stop button. |
 | [`ActionChips`](./components/ai/ActionChips.tsx) | Horizontal row of suggestion chips with a staggered entrance animation. |
@@ -146,6 +149,7 @@ BASE=https://raw.githubusercontent.com/Alfaro134/shadcn-ai-native/main/component
 
 curl -O $BASE/StreamingChatBubble.tsx
 curl -O $BASE/CodeBlock.tsx          # required by StreamingChatBubble
+curl -O $BASE/ReasoningBlock.tsx
 curl -O $BASE/DynamicPromptInput.tsx
 curl -O $BASE/ActionChips.tsx
 ```
@@ -245,13 +249,15 @@ npm install
 npx expo start
 ```
 
-Scan the QR code with **Expo Go**, or press `i` / `a` for a simulator. The demo streams simulated AI replies, including a highlighted code block, so you can try everything without an API key.
+Scan the QR code with **Expo Go**, or press `i` / `a` for a simulator. The demo streams simulated AI replies with a reasoning phase, Markdown (headings, lists, blockquotes, links) and a highlighted code block, so you can try everything without an API key.
 
 ## 🗺️ Roadmap
 
-- [ ] **Markdown rendering:** lists, headings, links, tables and blockquotes, streaming-safe with no dependencies
+- [x] **Markdown rendering:** lists, headings, links and blockquotes, streaming-safe with no dependencies
+- [x] **Reasoning block:** collapsible "thinking" accordion for reasoning models
+- [ ] **Markdown tables**
 - [ ] **CLI:** `npx shadcn-ai-native add <component>` with automatic dependency handling
-- [ ] **AI SDK recipe:** a ready-made example with the Vercel AI SDK `useChat`, plus a collapsible reasoning / tool-call block
+- [ ] **AI SDK recipe:** a ready-made example with the Vercel AI SDK `useChat`, plus a tool-call block
 - [ ] Attachment previews · Voice input · Message editing
 
 Have an idea? [Open an issue](https://github.com/Alfaro134/shadcn-ai-native/issues). PRs are welcome!

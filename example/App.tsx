@@ -9,6 +9,7 @@ import * as Clipboard from "expo-clipboard";
 
 import { ActionChips, type ActionChip } from "../components/ai/ActionChips";
 import { DynamicPromptInput } from "../components/ai/DynamicPromptInput";
+import { ReasoningBlock } from "../components/ai/ReasoningBlock";
 import { StreamingChatBubble, type ChatRole } from "../components/ai/StreamingChatBubble";
 
 /* -------------------------------------------------------------------------------------------------
@@ -45,45 +46,84 @@ const theme = {
 
 const THINKING_DELAY_MS = 650;
 const TOKEN_INTERVAL_MS = 40;
+/** Reasoning streams a little faster than the answer, like real reasoning models. */
+const REASONING_INTERVAL_MS = 25;
 
-const RESPONSES = {
-  code: [
-    "Here's a fully typed `useDebounce` hook. It waits until the user stops typing before updating the value, which is perfect for search inputs:",
-    "",
-    "```tsx",
-    'import { useEffect, useState } from "react";',
-    "",
-    "export function useDebounce<T>(value: T, delay = 300): T {",
-    "  const [debounced, setDebounced] = useState(value);",
-    "",
-    "  useEffect(() => {",
-    "    const id = setTimeout(() => setDebounced(value), delay);",
-    "    return () => clearTimeout(id);",
-    "  }, [value, delay]);",
-    "",
-    "  return debounced;",
-    "}",
-    "```",
-    "",
-    "Use it as `const query = useDebounce(text, 400);` and fire your API call whenever **query** changes.",
-  ].join("\n"),
-  general: [
-    "Streaming makes an assistant feel **fast** even when the full answer takes seconds to generate.",
-    "",
-    "Instead of staring at a spinner, you start reading after the first few hundred milliseconds. Your brain processes the text as it arrives, so the total wait feels much shorter.",
-    "",
-    "The UI challenge is keeping it smooth: every new token can change the bubble's height, so the layout has to **ease** into each new size instead of jumping.",
-  ].join("\n"),
-  simple: [
-    "Imagine a backpack 🎒",
-    "",
-    "A **closure** is a function that carries a backpack. When the function is created, it packs up the variables around it and takes them wherever it goes.",
-    "",
-    "So even after the outer function has finished, the inner one can still open its backpack and use those values.",
-  ].join("\n"),
-} as const;
+interface SimulatedResponse {
+  /** Optional "thinking" shown in a <ReasoningBlock /> before the answer streams. */
+  reasoning?: string;
+  /** The answer, as Markdown. */
+  answer: string;
+}
 
-function pickResponse(prompt: string, codeShown: boolean): string {
+const RESPONSES: Record<"code" | "general" | "simple", SimulatedResponse> = {
+  code: {
+    reasoning: [
+      "The user wants a debounce hook in TypeScript, so it should be generic over the value type.",
+      "",
+      "A timer in useEffect is enough: restart it on every change and clear it in the cleanup, so only the last value within the delay window wins. Worth explaining the mechanics briefly and ending with a practical tip.",
+    ].join("\n"),
+    answer: [
+      "## A typed `useDebounce` hook",
+      "",
+      "It waits until the user **stops typing** before updating the value, which is perfect for *search inputs*:",
+      "",
+      "```tsx",
+      'import { useEffect, useState } from "react";',
+      "",
+      "export function useDebounce<T>(value: T, delay = 300): T {",
+      "  const [debounced, setDebounced] = useState(value);",
+      "",
+      "  useEffect(() => {",
+      "    const id = setTimeout(() => setDebounced(value), delay);",
+      "    return () => clearTimeout(id);",
+      "  }, [value, delay]);",
+      "",
+      "  return debounced;",
+      "}",
+      "```",
+      "",
+      "### How it works",
+      "",
+      "- Every change to `value` starts a **new timer**",
+      "- The cleanup cancels the previous one, so only the _last_ change wins",
+      "- `delay` defaults to **300 ms**",
+      "",
+      "> Tip: fire your request whenever `query` changes, e.g. `const query = useDebounce(text, 400);`",
+    ].join("\n"),
+  },
+  general: {
+    reasoning: [
+      "They are asking about perceived performance, not raw speed.",
+      "",
+      "Key points: time to first token, reading while generating, visible progress. A numbered list fits, plus a link to the classic research on response times.",
+    ].join("\n"),
+    answer: [
+      "### Why streaming feels faster",
+      "",
+      "Streaming makes an assistant feel **fast** even when the full answer takes seconds to generate:",
+      "",
+      "1. **Time to first token** drops from seconds to milliseconds",
+      "2. You start *reading* while the model is still writing",
+      "3. Visible progress makes the wait feel shorter",
+      "",
+      "> The UI challenge is keeping it smooth: every token can change the bubble's height, so the layout has to **ease** into each new size.",
+      "",
+      "Read more in [Nielsen Norman Group's guide to response times](https://www.nngroup.com/articles/response-times-3-important-limits/).",
+    ].join("\n"),
+  },
+  simple: {
+    answer: [
+      "Imagine a backpack 🎒",
+      "",
+      "A **closure** is a function that carries a backpack. When the function is created, it _packs up_ the variables around it and takes them wherever it goes.",
+      "",
+      "So even after the outer function has finished, the inner one can still open its backpack and use those values.",
+    ].join("\n"),
+  },
+};
+
+function pickResponse(prompt: string, codeShown: boolean): SimulatedResponse {
   if (/simpl|eli5|like i'?m/i.test(prompt)) return RESPONSES.simple;
   if (/hook|code|typescript|function|snippet|write|debounce|component/i.test(prompt) || !codeShown) {
     return RESPONSES.code;
@@ -107,6 +147,10 @@ interface Message {
   id: string;
   role: ChatRole;
   content: string;
+  /** The model's thinking, for responses that reason before answering. */
+  reasoning?: string;
+  /** How long the reasoning phase took, in seconds. */
+  thoughtSeconds?: number;
 }
 
 const SUGGESTIONS: ActionChip[] = [
@@ -184,19 +228,30 @@ function EmptyState() {
  * subscribes, so a token re-renders exactly one bubble instead of the whole screen and list.
  * -----------------------------------------------------------------------------------------------*/
 
+type StreamPhase = "reasoning" | "answer";
+
+/** What the streaming row renders. Replaced (never mutated) on every token. */
+interface StreamSnapshot {
+  phase: StreamPhase;
+  reasoning: string;
+  content: string;
+}
+
+const EMPTY_SNAPSHOT: StreamSnapshot = { phase: "answer", reasoning: "", content: "" };
+
 interface StreamStore {
-  get: () => string;
-  set: (next: string) => void;
+  get: () => StreamSnapshot;
+  set: (next: StreamSnapshot) => void;
   subscribe: (listener: () => void) => () => void;
 }
 
 function createStreamStore(): StreamStore {
-  let text = "";
+  let snapshot = EMPTY_SNAPSHOT;
   const listeners = new Set<() => void>();
   return {
-    get: () => text,
+    get: () => snapshot,
     set: (next) => {
-      text = next;
+      snapshot = next;
       listeners.forEach((listener) => listener());
     },
     subscribe: (listener) => {
@@ -211,8 +266,8 @@ function createStreamStore(): StreamStore {
 const NOOP_SUBSCRIBE = () => () => {};
 const NULL_SNAPSHOT = () => null;
 
-/** Live text for the streaming row; `null` (and no subscription) for every other row. */
-function useLiveText(store: StreamStore, active: boolean): string | null {
+/** Live snapshot for the streaming row; `null` (and no subscription) for every other row. */
+function useLiveSnapshot(store: StreamStore, active: boolean): StreamSnapshot | null {
   return useSyncExternalStore(active ? store.subscribe : NOOP_SUBSCRIBE, active ? store.get : NULL_SNAPSHOT);
 }
 
@@ -244,8 +299,20 @@ const ROW_ENTERING = FadeInUp.duration(280)
   .withInitialValues({ opacity: 0, transform: [{ translateY: -12 }] });
 
 const MessageRow = memo(function MessageRow({ message, isStreaming, showActions, copied, store, actions }: MessageRowProps) {
-  const liveText = useLiveText(store, isStreaming);
-  const content = liveText ?? message.content;
+  const live = useLiveSnapshot(store, isStreaming);
+  const content = live ? live.content : message.content;
+  const reasoning = live ? live.reasoning : message.reasoning;
+  const thinking = live?.phase === "reasoning";
+  // While the model is thinking, the ReasoningBlock carries the "busy" state, not a typing bubble.
+  const answerStreaming = isStreaming && !thinking;
+
+  const header = useMemo(
+    () =>
+      reasoning !== undefined && (reasoning.length > 0 || thinking) ? (
+        <ReasoningBlock content={reasoning} isStreaming={thinking} duration={message.thoughtSeconds} />
+      ) : undefined,
+    [reasoning, thinking, message.thoughtSeconds],
+  );
 
   const footer = useMemo(() => {
     if (!showActions) return null;
@@ -262,9 +329,10 @@ const MessageRow = memo(function MessageRow({ message, isStreaming, showActions,
       <StreamingChatBubble
         role={message.role}
         content={content}
-        isStreaming={isStreaming}
+        isStreaming={answerStreaming}
         animateEntry={false}
         avatar={message.role === "assistant" ? ASSISTANT_AVATAR : undefined}
+        header={header}
         footer={footer}
       />
     </Animated.View>
@@ -310,45 +378,94 @@ function ChatScreen() {
     };
   }, [clearStreamTimers]);
 
+  /** Timing of the current stream, for the "Thought for N seconds" label. */
+  const streamMeta = useRef<{ startedAt: number; hasReasoning: boolean; thoughtSeconds?: number }>({
+    startedAt: 0,
+    hasReasoning: false,
+  });
+
   /** Ends the stream (completed or aborted) and commits the streamed text into state once. */
   const finishStream = useCallback(() => {
     clearStreamTimers();
     const id = streamingIdRef.current;
     if (!id) return;
     streamingIdRef.current = null;
-    const finalText = store.get();
+    const final = store.get();
+    const meta = streamMeta.current;
+    const thoughtSeconds = meta.hasReasoning
+      ? (meta.thoughtSeconds ?? Math.max(1, Math.round((Date.now() - meta.startedAt) / 1000)))
+      : undefined;
     setStreamingId(null);
     setMessages((prev) =>
-      finalText.length === 0
-        ? prev.filter((m) => m.id !== id) // aborted while "thinking": drop the empty bubble
-        : prev.map((m) => (m.id === id ? { ...m, content: finalText } : m)),
+      final.content.length === 0 && final.reasoning.length === 0
+        ? prev.filter((m) => m.id !== id) // aborted before anything arrived: drop the empty row
+        : prev.map((m) =>
+            m.id === id
+              ? { ...m, content: final.content, reasoning: meta.hasReasoning ? final.reasoning : undefined, thoughtSeconds }
+              : m,
+          ),
     );
   }, [clearStreamTimers, store]);
 
   const streamResponse = useCallback(
     (prompt: string) => {
       const id = makeId();
-      const full = pickResponse(prompt, codeShown.current);
-      if (full === RESPONSES.code) codeShown.current = true;
+      const response = pickResponse(prompt, codeShown.current);
+      if (response === RESPONSES.code) codeShown.current = true;
+      const hasReasoning = response.reasoning !== undefined;
 
-      store.set("");
+      streamMeta.current = { startedAt: Date.now(), hasReasoning };
+      store.set({ phase: hasReasoning ? "reasoning" : "answer", reasoning: "", content: "" });
       streamingIdRef.current = id;
       setStreamingId(id);
-      setMessages((prev) => [...prev, { id, role: "assistant", content: "" }]);
+      setMessages((prev) => [...prev, { id, role: "assistant", content: "", reasoning: hasReasoning ? "" : undefined }]);
 
-      const tokens = tokenize(full);
-      let cursor = 0;
-      let text = "";
+      let reasoning = "";
+      let content = "";
+
+      // Emits 1–3 tokens per tick for a natural, slightly uneven cadence; calls `done` at the end.
+      const emit = (tokens: string[], interval: number, onChunk: (chunk: string) => void, done: () => void) => {
+        let cursor = 0;
+        timers.current.tokens = setInterval(() => {
+          const burst = 1 + Math.floor(Math.random() * 3);
+          onChunk(tokens.slice(cursor, cursor + burst).join(""));
+          cursor += burst;
+          if (cursor >= tokens.length) {
+            if (timers.current.tokens) clearInterval(timers.current.tokens);
+            done();
+          }
+        }, interval);
+      };
+
+      const streamAnswer = () =>
+        emit(
+          tokenize(response.answer),
+          TOKEN_INTERVAL_MS,
+          (chunk) => {
+            content += chunk;
+            store.set({ phase: "answer", reasoning, content });
+          },
+          finishStream,
+        );
 
       timers.current.thinking = setTimeout(() => {
-        timers.current.tokens = setInterval(() => {
-          // Emit 1–3 tokens per tick for a natural, slightly uneven cadence.
-          const burst = 1 + Math.floor(Math.random() * 3);
-          text += tokens.slice(cursor, cursor + burst).join("");
-          cursor += burst;
-          store.set(text);
-          if (cursor >= tokens.length) finishStream();
-        }, TOKEN_INTERVAL_MS);
+        if (!hasReasoning) {
+          streamAnswer();
+          return;
+        }
+        emit(
+          tokenize(response.reasoning ?? ""),
+          REASONING_INTERVAL_MS,
+          (chunk) => {
+            reasoning += chunk;
+            store.set({ phase: "reasoning", reasoning, content });
+          },
+          () => {
+            streamMeta.current.thoughtSeconds = Math.max(1, Math.round((Date.now() - streamMeta.current.startedAt) / 1000));
+            store.set({ phase: "answer", reasoning, content });
+            streamAnswer();
+          },
+        );
       }, THINKING_DELAY_MS);
     },
     [finishStream, store],
@@ -387,7 +504,7 @@ function ChatScreen() {
     clearStreamTimers();
     streamingIdRef.current = null;
     codeShown.current = false;
-    store.set("");
+    store.set(EMPTY_SNAPSHOT);
     setStreamingId(null);
     setMessages([]);
   }, [clearStreamTimers, store]);
