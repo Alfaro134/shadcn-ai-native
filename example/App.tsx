@@ -1,6 +1,6 @@
 import "./global.css";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FlatList, Platform, Pressable, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -127,13 +127,15 @@ function AssistantAvatar({ small = false }: { small?: boolean }) {
   );
 }
 
-function Header({ topInset, onNewChat }: { topInset: number; onNewChat: () => void }) {
+const Header = memo(function Header({ topInset, onNewChat }: { topInset: number; onNewChat: () => void }) {
   return (
     <View className={theme.header} style={{ paddingTop: topInset + 8 }}>
       <View className={theme.headerLeft}>
         <AssistantAvatar />
         <View>
-          <Text className={theme.headerTitle}>Assistant</Text>
+          <Text className={theme.headerTitle} accessibilityRole="header">
+            Assistant
+          </Text>
           <View className={theme.headerSubtitleRow}>
             <View className={theme.onlineDot} />
             <Text className={theme.headerSubtitle}>shadcn-ai-native · demo</Text>
@@ -141,7 +143,14 @@ function Header({ topInset, onNewChat }: { topInset: number; onNewChat: () => vo
         </View>
       </View>
 
-      <Pressable onPress={onNewChat} accessibilityRole="button" accessibilityLabel="New chat" className={theme.newChatButton}>
+      <Pressable
+        onPress={onNewChat}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="New chat"
+        accessibilityHint="Clears the current conversation"
+        className={theme.newChatButton}
+      >
         <View className="h-3 w-3 items-center justify-center">
           <View className={`absolute h-[1.5px] w-3 rounded-full ${theme.newChatIcon}`} />
           <View className={`absolute h-3 w-[1.5px] rounded-full ${theme.newChatIcon}`} />
@@ -150,7 +159,7 @@ function Header({ topInset, onNewChat }: { topInset: number; onNewChat: () => vo
       </Pressable>
     </View>
   );
-}
+});
 
 function EmptyState() {
   return (
@@ -169,18 +178,115 @@ function EmptyState() {
 }
 
 /* -------------------------------------------------------------------------------------------------
+ * Streaming store
+ *
+ * Tokens are written here, not into React state. Only the row that is currently streaming
+ * subscribes, so a token re-renders exactly one bubble instead of the whole screen and list.
+ * -----------------------------------------------------------------------------------------------*/
+
+interface StreamStore {
+  get: () => string;
+  set: (next: string) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createStreamStore(): StreamStore {
+  let text = "";
+  const listeners = new Set<() => void>();
+  return {
+    get: () => text,
+    set: (next) => {
+      text = next;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+const NOOP_SUBSCRIBE = () => () => {};
+const NULL_SNAPSHOT = () => null;
+
+/** Live text for the streaming row; `null` (and no subscription) for every other row. */
+function useLiveText(store: StreamStore, active: boolean): string | null {
+  return useSyncExternalStore(active ? store.subscribe : NOOP_SUBSCRIBE, active ? store.get : NULL_SNAPSHOT);
+}
+
+/* -------------------------------------------------------------------------------------------------
+ * Message row
+ * -----------------------------------------------------------------------------------------------*/
+
+interface RowActions {
+  regenerate: () => void;
+  copy: (message: Message) => void;
+  simpler: () => void;
+}
+
+interface MessageRowProps {
+  message: Message;
+  isStreaming: boolean;
+  showActions: boolean;
+  copied: boolean;
+  store: StreamStore;
+  actions: RowActions;
+}
+
+// Hoisted so the memoized bubble receives the same element on every render.
+const ASSISTANT_AVATAR = <AssistantAvatar small />;
+
+// The list is inverted (scaleY: -1), so FadeInUp reads as "slide up" on screen.
+const ROW_ENTERING = FadeInUp.duration(280)
+  .easing(Easing.out(Easing.cubic))
+  .withInitialValues({ opacity: 0, transform: [{ translateY: -12 }] });
+
+const MessageRow = memo(function MessageRow({ message, isStreaming, showActions, copied, store, actions }: MessageRowProps) {
+  const liveText = useLiveText(store, isStreaming);
+  const content = liveText ?? message.content;
+
+  const footer = useMemo(() => {
+    if (!showActions) return null;
+    const chips: ActionChip[] = [
+      { id: "regenerate", label: "↻  Regenerate", onPress: actions.regenerate },
+      { id: "copy", label: copied ? "✓  Copied" : "Copy", onPress: () => actions.copy(message) },
+      { id: "simpler", label: "Explain simpler", onPress: actions.simpler },
+    ];
+    return <ActionChips chips={chips} contentContainerClassName="px-0" />;
+  }, [showActions, copied, actions, message]);
+
+  return (
+    <Animated.View entering={ROW_ENTERING}>
+      <StreamingChatBubble
+        role={message.role}
+        content={content}
+        isStreaming={isStreaming}
+        animateEntry={false}
+        avatar={message.role === "assistant" ? ASSISTANT_AVATAR : undefined}
+        footer={footer}
+      />
+    </Animated.View>
+  );
+});
+
+/* -------------------------------------------------------------------------------------------------
  * Chat screen
  * -----------------------------------------------------------------------------------------------*/
 
 function ChatScreen() {
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [store] = useState(createStreamStore);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const streamingIdRef = useRef<string | null>(null);
   const codeShown = useRef(false);
+  const mounted = useRef(true);
   const timers = useRef<{
     thinking?: ReturnType<typeof setTimeout>;
     tokens?: ReturnType<typeof setInterval>;
@@ -190,24 +296,34 @@ function ChatScreen() {
   const clearStreamTimers = useCallback(() => {
     if (timers.current.thinking) clearTimeout(timers.current.thinking);
     if (timers.current.tokens) clearInterval(timers.current.tokens);
+    timers.current.thinking = undefined;
+    timers.current.tokens = undefined;
   }, []);
 
-  useEffect(
-    () => () => {
+  // Single teardown point: no timer, interval or pending copy can outlive the screen.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       clearStreamTimers();
       if (timers.current.copied) clearTimeout(timers.current.copied);
-    },
-    [clearStreamTimers],
-  );
+    };
+  }, [clearStreamTimers]);
 
+  /** Ends the stream (completed or aborted) and commits the streamed text into state once. */
   const finishStream = useCallback(() => {
     clearStreamTimers();
     const id = streamingIdRef.current;
+    if (!id) return;
     streamingIdRef.current = null;
+    const finalText = store.get();
     setStreamingId(null);
-    // A stop during the "thinking" phase leaves an empty bubble behind; drop it.
-    setMessages((prev) => prev.filter((m) => !(m.id === id && m.content.length === 0)));
-  }, [clearStreamTimers]);
+    setMessages((prev) =>
+      finalText.length === 0
+        ? prev.filter((m) => m.id !== id) // aborted while "thinking": drop the empty bubble
+        : prev.map((m) => (m.id === id ? { ...m, content: finalText } : m)),
+    );
+  }, [clearStreamTimers, store]);
 
   const streamResponse = useCallback(
     (prompt: string) => {
@@ -215,6 +331,7 @@ function ChatScreen() {
       const full = pickResponse(prompt, codeShown.current);
       if (full === RESPONSES.code) codeShown.current = true;
 
+      store.set("");
       streamingIdRef.current = id;
       setStreamingId(id);
       setMessages((prev) => [...prev, { id, role: "assistant", content: "" }]);
@@ -229,19 +346,18 @@ function ChatScreen() {
           const burst = 1 + Math.floor(Math.random() * 3);
           text += tokens.slice(cursor, cursor + burst).join("");
           cursor += burst;
-          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: text } : m)));
+          store.set(text);
           if (cursor >= tokens.length) finishStream();
         }, TOKEN_INTERVAL_MS);
       }, THINKING_DELAY_MS);
     },
-    [finishStream],
+    [finishStream, store],
   );
 
   const sendPrompt = useCallback(
     (prompt: string) => {
       if (streamingIdRef.current) return;
       setMessages((prev) => [...prev, { id: makeId(), role: "user", content: prompt }]);
-      setDraft("");
       streamResponse(prompt);
     },
     [streamResponse],
@@ -249,14 +365,19 @@ function ChatScreen() {
 
   const regenerate = useCallback(() => {
     if (streamingIdRef.current) return;
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUser = [...messagesRef.current].reverse().find((m) => m.role === "user");
     if (!lastUser) return;
     setMessages((prev) => (prev[prev.length - 1]?.role === "assistant" ? prev.slice(0, -1) : prev));
     streamResponse(lastUser.content);
-  }, [messages, streamResponse]);
+  }, [streamResponse]);
 
   const copyMessage = useCallback(async (message: Message) => {
-    await Clipboard.setStringAsync(message.content);
+    try {
+      await Clipboard.setStringAsync(message.content);
+    } catch {
+      return;
+    }
+    if (!mounted.current) return;
     setCopiedId(message.id);
     if (timers.current.copied) clearTimeout(timers.current.copied);
     timers.current.copied = setTimeout(() => setCopiedId(null), 1500);
@@ -266,10 +387,15 @@ function ChatScreen() {
     clearStreamTimers();
     streamingIdRef.current = null;
     codeShown.current = false;
+    store.set("");
     setStreamingId(null);
     setMessages([]);
-    setDraft("");
-  }, [clearStreamTimers]);
+  }, [clearStreamTimers, store]);
+
+  const actions = useMemo<RowActions>(
+    () => ({ regenerate, copy: copyMessage, simpler: () => sendPrompt("Explain that simpler") }),
+    [regenerate, copyMessage, sendPrompt],
+  );
 
   // Inverted list keeps the newest message pinned above the input, so growing bubbles and the
   // opening keyboard never push content off-screen.
@@ -279,36 +405,35 @@ function ChatScreen() {
     [messages],
   );
 
+  // Changes only when a message starts or finishes, or the copy confirmation toggles; never per token.
   const renderItem = useCallback(
     ({ item }: { item: Message }) => {
       const isStreaming = item.id === streamingId;
-      const showChips = item.role === "assistant" && item.id === lastAssistantId && !isStreaming;
-
-      const chips: ActionChip[] = [
-        { id: "regenerate", label: "↻  Regenerate", onPress: regenerate },
-        { id: "copy", label: copiedId === item.id ? "✓  Copied" : "Copy", onPress: () => copyMessage(item) },
-        { id: "simpler", label: "Explain simpler", onPress: () => sendPrompt("Explain that simpler") },
-      ];
-
       return (
-        // The list is inverted (scaleY: -1), so FadeInUp reads as "slide up" on screen.
-        <Animated.View
-          entering={FadeInUp.duration(280)
-            .easing(Easing.out(Easing.cubic))
-            .withInitialValues({ opacity: 0, transform: [{ translateY: -12 }] })}
-        >
-          <StreamingChatBubble
-            role={item.role}
-            content={item.content}
-            isStreaming={isStreaming}
-            animateEntry={false}
-            avatar={item.role === "assistant" ? <AssistantAvatar small /> : undefined}
-            footer={showChips ? <ActionChips chips={chips} contentContainerClassName="px-0" /> : null}
-          />
-        </Animated.View>
+        <MessageRow
+          message={item}
+          isStreaming={isStreaming}
+          showActions={item.role === "assistant" && item.id === lastAssistantId && !isStreaming}
+          copied={copiedId === item.id}
+          store={store}
+          actions={actions}
+        />
       );
     },
-    [streamingId, lastAssistantId, copiedId, regenerate, copyMessage, sendPrompt],
+    [streamingId, lastAssistantId, copiedId, store, actions],
+  );
+
+  const suggestionChips = useMemo(
+    () => (
+      <ActionChips
+        chips={SUGGESTIONS}
+        onChipPress={(chip) => sendPrompt(chip.label)}
+        initialDelay={250}
+        className={theme.suggestions}
+        contentContainerClassName="px-1"
+      />
+    ),
+    [sendPrompt],
   );
 
   const isEmpty = messages.length === 0;
@@ -326,7 +451,6 @@ function ChatScreen() {
           inverted
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
-          extraData={renderItem}
           className={theme.list}
           contentContainerClassName={theme.listContent}
           keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
@@ -335,26 +459,15 @@ function ChatScreen() {
         />
       )}
 
+      {/* Uncontrolled: typing re-renders only the input, never the chat list. */}
       <DynamicPromptInput
-        value={draft}
-        onChangeText={setDraft}
         onSend={sendPrompt}
         onStop={finishStream}
         onAttach={() => {}}
         isGenerating={streamingId !== null}
         placeholder="Message Assistant"
         bottomInset={insets.bottom}
-        accessory={
-          isEmpty ? (
-            <ActionChips
-              chips={SUGGESTIONS}
-              onChipPress={(chip) => sendPrompt(chip.label)}
-              initialDelay={250}
-              className={theme.suggestions}
-              contentContainerClassName="px-1"
-            />
-          ) : null
-        }
+        accessory={isEmpty ? suggestionChips : null}
       />
     </View>
   );

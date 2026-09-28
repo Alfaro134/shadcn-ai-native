@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   FadeInDown,
   useAnimatedStyle,
@@ -63,9 +64,12 @@ export interface StreamingChatBubbleProps {
   content: string;
   /** True while tokens are still arriving: shows a caret, or a typing indicator if empty. */
   isStreaming?: boolean;
-  /** Optional avatar rendered to the left of assistant messages. */
+  /**
+   * Optional avatar rendered to the left of assistant messages. The bubble is memoized: pass a
+   * stable element (hoisted or `useMemo`) so finished bubbles don't re-render with the list.
+   */
   avatar?: React.ReactNode;
-  /** Optional node under the bubble, e.g. <ActionChips />. */
+  /** Optional node under the bubble, e.g. <ActionChips />. Same stability note as `avatar`. */
   footer?: React.ReactNode;
   /** Animate the bubble in on mount. Disable for history loaded in bulk. */
   animateEntry?: boolean;
@@ -85,6 +89,16 @@ function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
 
+/** Trims leading/trailing newlines without a regex (`/\n+$/` backtracks quadratically on long runs). */
+function trimNewlines(value: string): string {
+  const isNewline = (c: string | undefined) => c === "\n" || c === "\r";
+  let start = 0;
+  let end = value.length;
+  while (start < end && isNewline(value[start])) start++;
+  while (end > start && isNewline(value[end - 1])) end--;
+  return start === 0 && end === value.length ? value : value.slice(start, end);
+}
+
 /**
  * Splits a message on ``` fences. Tolerates an unterminated trailing fence so code blocks
  * appear (and grow) while they are still being streamed.
@@ -96,7 +110,7 @@ function parseSegments(source: string): Segment[] {
   parts.forEach((part, index) => {
     const isCode = index % 2 === 1;
     if (!isCode) {
-      const value = part.replace(/^\n+|\n+$/g, "");
+      const value = trimNewlines(part);
       if (value.length > 0) segments.push({ type: "text", value });
       return;
     }
@@ -104,9 +118,11 @@ function parseSegments(source: string): Segment[] {
     const newline = part.indexOf("\n");
     const header = newline === -1 ? part : part.slice(0, newline);
     const body = newline === -1 ? "" : part.slice(newline + 1);
+    // Info strings can carry extras (```tsx title="App.tsx"); only the first word is the language.
+    const language = header.trim().split(" ")[0];
     segments.push({
       type: "code",
-      language: header.trim() || undefined,
+      language: language || undefined,
       value: body,
       complete: index < parts.length - 1,
     });
@@ -165,6 +181,7 @@ function TypingDot({ delay }: { delay: number }) {
         -1,
       ),
     );
+    return () => cancelAnimation(progress);
   }, [delay, progress]);
 
   const style = useAnimatedStyle(() => ({
@@ -181,7 +198,7 @@ function TypingDot({ delay }: { delay: number }) {
 
 function TypingIndicator() {
   return (
-    <View className={theme.typingRow} accessibilityLabel="Assistant is typing">
+    <View className={theme.typingRow} accessible accessibilityRole="progressbar" accessibilityLabel="Assistant is typing">
       <TypingDot delay={0} />
       <TypingDot delay={140} />
       <TypingDot delay={280} />
@@ -205,6 +222,10 @@ function StreamingChatBubbleImpl({
   const segments = useMemo(() => parseSegments(content), [content]);
   const showTyping = isStreaming && segments.length === 0;
   const lastSegment = segments[segments.length - 1];
+  const hasCode = segments.some((segment) => segment.type === "code");
+  // Plain-text bubbles are one screen-reader stop. Bubbles with code stay ungrouped so the
+  // CodeBlock's copy button remains reachable.
+  const groupForScreenReader = !hasCode && !showTyping;
 
   // The bubble's height follows its measured content through a short tween, so each streamed
   // chunk (or a new line wrapping) eases in instead of snapping the list.
@@ -238,8 +259,8 @@ function StreamingChatBubbleImpl({
             <View
               onLayout={onContentLayout}
               className={cx(theme.bubble[role], className)}
-              accessible
-              accessibilityLabel={`${role === "user" ? "You" : "Assistant"}: ${content}`}
+              accessible={groupForScreenReader}
+              accessibilityLabel={groupForScreenReader ? `${role === "user" ? "You" : "Assistant"}: ${content}` : undefined}
             >
               {showTyping ? <TypingIndicator /> : null}
 
@@ -247,12 +268,15 @@ function StreamingChatBubbleImpl({
                 const isLast = segment === lastSegment;
 
                 if (segment.type === "code") {
+                  const codeStreaming = isStreaming && !segment.complete;
+                  // A stream cut off right after an opening fence leaves an empty block: drop it.
+                  if (!codeStreaming && segment.value.trim().length === 0) return null;
                   return (
                     <CodeBlock
                       key={`code-${index}`}
                       code={segment.value}
                       language={segment.language}
-                      isStreaming={isStreaming && !segment.complete}
+                      isStreaming={codeStreaming}
                     />
                   );
                 }

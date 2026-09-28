@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   TextInput,
+  useWindowDimensions,
   View,
   type NativeSyntheticEvent,
   type TextInputContentSizeChangeEventData,
@@ -45,6 +46,13 @@ const theme = {
   },
 } as const;
 
+/** The input never grows taller than this fraction of the window, whatever `maxHeight` says. */
+const MAX_WINDOW_FRACTION = 0.35;
+const GROW_TIMING = { duration: 140, easing: Easing.out(Easing.cubic) };
+const PRESS_SPRING = { damping: 15, stiffness: 400 };
+/** 40px buttons + 4px slop on each side = 48px touch target (Material / Apple HIG minimum). */
+const BUTTON_HIT_SLOP = 4;
+
 /* -------------------------------------------------------------------------------------------------
  * Types
  * -----------------------------------------------------------------------------------------------*/
@@ -65,18 +73,27 @@ export interface DynamicPromptInputProps {
   placeholder?: string;
   /** Height of one line, in px. */
   minHeight?: number;
-  /** Height the input grows to before it starts scrolling, in px. */
+  /**
+   * Height the input grows to before it starts scrolling, in px. Also capped at 35% of the
+   * window height, so a huge paste can never cover the conversation.
+   */
   maxHeight?: number;
   /**
    * Bottom safe-area inset (e.g. `useSafeAreaInsets().bottom`). Applied when the keyboard is
    * closed; the keyboard height replaces it when open.
    */
   bottomInset?: number;
+  /**
+   * Distance between this component's bottom edge and the bottom of the screen, e.g. a tab bar's
+   * height. Subtracted from the keyboard height (same role as KeyboardAvoidingView's
+   * `keyboardVerticalOffset`).
+   */
+  keyboardOffset?: number;
   /** Set to false if a parent already handles keyboard avoidance. */
   avoidKeyboard?: boolean;
   /** Rendered above the input row, e.g. <ActionChips /> or attachment previews. */
   accessory?: React.ReactNode;
-  /** Escape hatch for any other TextInput prop. */
+  /** Escape hatch for any other TextInput prop (e.g. `maxLength`). */
   inputProps?: Omit<TextInputProps, "value" | "onChangeText" | "multiline" | "onContentSizeChange" | "editable">;
   className?: string;
 }
@@ -128,6 +145,7 @@ export function DynamicPromptInput({
   minHeight = 40,
   maxHeight = 160,
   bottomInset = 0,
+  keyboardOffset = 0,
   avoidKeyboard = true,
   accessory,
   inputProps,
@@ -137,60 +155,82 @@ export function DynamicPromptInput({
   const [innerValue, setInnerValue] = useState("");
   const text = isControlled ? value : innerValue;
 
+  // Latest text, readable synchronously. Guards against a double tap sending twice before the
+  // cleared value has re-rendered.
+  const textRef = useRef(text);
+  textRef.current = text;
+
+  const { height: windowHeight } = useWindowDimensions();
+  const effectiveMax = Math.max(minHeight, Math.min(maxHeight, Math.round(windowHeight * MAX_WINDOW_FRACTION)));
+
   const [scrollEnabled, setScrollEnabled] = useState(false);
+  const contentHeight = useRef(minHeight);
   const inputHeight = useSharedValue(minHeight);
   const buttonScale = useSharedValue(1);
 
-  // Keyboard avoidance runs on the UI thread and tracks the keyboard frame by frame on both
-  // platforms, including Android edge-to-edge where KeyboardAvoidingView falls short.
+  // Tracks the keyboard frame by frame on the UI thread on both platforms, including Android
+  // edge-to-edge (mandatory from SDK 54), where KeyboardAvoidingView is unreliable.
+  // Reanimated 4 marks this hook deprecated in favor of react-native-keyboard-controller; it is
+  // still fully supported and keeps this file free of extra native dependencies.
   const keyboard = useAnimatedKeyboard();
 
   const canSend = text.trim().length > 0 && !disabled;
   const mode: "send" | "stop" = isGenerating ? "stop" : "send";
   const actionEnabled = mode === "stop" ? !!onStop : canSend;
 
+  const applyHeight = useCallback(
+    (measured: number) => {
+      contentHeight.current = measured;
+      inputHeight.value = withTiming(Math.min(effectiveMax, Math.max(minHeight, measured)), GROW_TIMING);
+      setScrollEnabled(measured > effectiveMax);
+    },
+    [effectiveMax, minHeight, inputHeight],
+  );
+
+  const handleContentSizeChange = useCallback(
+    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      applyHeight(event.nativeEvent.contentSize.height);
+    },
+    [applyHeight],
+  );
+
+  // Re-clamp when the cap changes (rotation, split screen, new props).
+  useEffect(() => {
+    applyHeight(contentHeight.current);
+  }, [applyHeight]);
+
+  // Android does not always emit a content-size change when the text is cleared programmatically.
+  useEffect(() => {
+    if (text.length === 0) applyHeight(minHeight);
+  }, [text, minHeight, applyHeight]);
+
   const handleChangeText = useCallback(
     (next: string) => {
+      textRef.current = next;
       if (!isControlled) setInnerValue(next);
       onChangeText?.(next);
     },
     [isControlled, onChangeText],
   );
 
-  const handleContentSizeChange = useCallback(
-    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-      const contentHeight = event.nativeEvent.contentSize.height;
-      const next = Math.min(maxHeight, Math.max(minHeight, contentHeight));
-      inputHeight.value = withTiming(next, { duration: 140, easing: Easing.out(Easing.cubic) });
-      setScrollEnabled(contentHeight > maxHeight);
-    },
-    [inputHeight, maxHeight, minHeight],
-  );
-
-  // Android does not always emit a content-size change when the text is cleared programmatically.
-  useEffect(() => {
-    if (text.length === 0) {
-      inputHeight.value = withTiming(minHeight, { duration: 140, easing: Easing.out(Easing.cubic) });
-      setScrollEnabled(false);
-    }
-  }, [text, minHeight, inputHeight]);
-
   const handleActionPress = useCallback(() => {
     if (mode === "stop") {
       onStop?.();
       return;
     }
-    if (!canSend) return;
-    onSend(text.trim());
+    const prompt = textRef.current.trim();
+    if (prompt.length === 0 || disabled) return;
+    textRef.current = "";
+    onSend(prompt);
     if (!isControlled) setInnerValue("");
-  }, [mode, onStop, canSend, onSend, text, isControlled]);
+  }, [mode, onStop, disabled, onSend, isControlled]);
 
   const inputStyle = useAnimatedStyle(() => ({ height: inputHeight.value }));
 
   const buttonStyle = useAnimatedStyle(() => ({ transform: [{ scale: buttonScale.value }] }));
 
   const keyboardSpacerStyle = useAnimatedStyle(() => ({
-    height: avoidKeyboard ? Math.max(keyboard.height.value, bottomInset) : bottomInset,
+    height: avoidKeyboard ? Math.max(keyboard.height.value - keyboardOffset, bottomInset) : bottomInset,
   }));
 
   return (
@@ -202,9 +242,10 @@ export function DynamicPromptInput({
           <Pressable
             onPress={onAttach}
             disabled={disabled}
-            hitSlop={6}
+            hitSlop={BUTTON_HIT_SLOP}
             accessibilityRole="button"
             accessibilityLabel="Attach file"
+            accessibilityState={{ disabled }}
             className={theme.attachButton}
           >
             <PlusIcon />
@@ -225,7 +266,7 @@ export function DynamicPromptInput({
               placeholderTextColor={theme.placeholderColor}
               selectionColor={theme.selectionColor}
               textAlignVertical="top"
-              accessibilityLabel={placeholder}
+              accessibilityLabel={inputProps?.accessibilityLabel ?? placeholder}
               className={theme.input}
               style={{ height: "100%" }}
             />
@@ -236,12 +277,13 @@ export function DynamicPromptInput({
           <Pressable
             onPress={handleActionPress}
             onPressIn={() => {
-              buttonScale.value = withSpring(0.9, { damping: 15, stiffness: 400 });
+              buttonScale.value = withSpring(0.9, PRESS_SPRING);
             }}
             onPressOut={() => {
-              buttonScale.value = withSpring(1, { damping: 15, stiffness: 400 });
+              buttonScale.value = withSpring(1, PRESS_SPRING);
             }}
             disabled={!actionEnabled}
+            hitSlop={BUTTON_HIT_SLOP}
             accessibilityRole="button"
             accessibilityLabel={mode === "stop" ? "Stop generating" : "Send message"}
             accessibilityState={{ disabled: !actionEnabled }}

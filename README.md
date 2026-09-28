@@ -215,7 +215,9 @@ export default function ChatScreen() {
 
 ### Keyboard handling, in one sentence
 
-Put `DynamicPromptInput` at the bottom of a `flex-1` screen and **don't** wrap it in a `KeyboardAvoidingView`. It already tracks the keyboard with Reanimated's `useAnimatedKeyboard`. If a parent already handles the keyboard, pass `avoidKeyboard={false}`.
+Put `DynamicPromptInput` at the bottom of a `flex-1` screen and **don't** wrap it in a `KeyboardAvoidingView`. It already tracks the keyboard with Reanimated's `useAnimatedKeyboard`. If a parent already handles the keyboard, pass `avoidKeyboard={false}`. If something sits below the input, such as a tab bar, pass its height as `keyboardOffset` (the equivalent of `keyboardVerticalOffset`).
+
+> **Note on `useAnimatedKeyboard`:** Reanimated 4 marks this hook as deprecated in favor of [`react-native-keyboard-controller`](https://github.com/kirillzyusko/react-native-keyboard-controller). It is still fully functional, and we use it on purpose: it adds no extra native dependency, so the components keep working in **Expo Go** with no prebuild. If your app already uses `react-native-keyboard-controller`, pass `avoidKeyboard={false}` and let it handle the keyboard instead.
 
 ## 🎨 Customization
 

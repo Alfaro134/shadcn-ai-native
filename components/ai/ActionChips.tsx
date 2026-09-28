@@ -14,6 +14,12 @@ const theme = {
   label: "text-[13px] font-medium text-zinc-700 dark:text-zinc-300",
 } as const;
 
+/**
+ * Chips are ~36px tall; 6px above and below brings the touch target to 48px. Horizontal slop
+ * stays under half the 8px gap so neighbouring chips never overlap.
+ */
+const CHIP_HIT_SLOP = { top: 6, bottom: 6, left: 3, right: 3 };
+
 /* -------------------------------------------------------------------------------------------------
  * Types
  * -----------------------------------------------------------------------------------------------*/
@@ -87,6 +93,7 @@ function Chip({ chip, index, initialDelay, stagger, onChipPress }: ChipProps) {
             scale.value = withSpring(1, { damping: 15, stiffness: 400 });
           }}
           disabled={chip.disabled}
+          hitSlop={CHIP_HIT_SLOP}
           accessibilityRole="button"
           accessibilityLabel={chip.label}
           accessibilityState={{ disabled: !!chip.disabled }}

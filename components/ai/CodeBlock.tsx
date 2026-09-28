@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { AccessibilityInfo, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { ZoomIn, ZoomOut } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 
@@ -152,6 +152,18 @@ function grammarFor(language?: string): Grammar {
   }
 }
 
+/**
+ * Matches a call or declaration right after an identifier, including generic ones like
+ * `useState<T>(`. Sticky (`y`) so it runs in place at the identifier's end instead of on a copy
+ * of the rest of the string. Linear-time by construction: the leading whitespace run can only be
+ * followed by `<` or `(`, the generic body can't contain `>` and is capped at 64 chars.
+ */
+const CALL_LOOKAHEAD = /[ \t]*(?:<[\w ,.[\]|&]{0,64}>[ \t]*)?\(/y;
+const UPPERCASE_START = /^[A-Z]/;
+
+/** Above this size, highlighting is skipped: one nested <Text> per token gets expensive. */
+const MAX_HIGHLIGHT_CHARS = 20_000;
+
 function tokenize(code: string, grammar: Grammar): Token[] {
   const tokens: Token[] = [];
   const push = (kind: TokenKind, value: string) => {
@@ -160,7 +172,10 @@ function tokenize(code: string, grammar: Grammar): Token[] {
     else tokens.push({ kind, value });
   };
 
-  const pattern = new RegExp(grammar.pattern.source, "g");
+  // Every alternative in the grammar is linear-time: character classes in the string patterns are
+  // mutually exclusive, and comments and strings run to their terminator or end of input.
+  const pattern = grammar.pattern;
+  pattern.lastIndex = 0;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
@@ -176,11 +191,10 @@ function tokenize(code: string, grammar: Grammar): Token[] {
     else if (string) push("string", value);
     else if (number) push("number", value);
     else if (word) {
-      const rest = code.slice(pattern.lastIndex);
+      CALL_LOOKAHEAD.lastIndex = pattern.lastIndex;
       if (grammar.keywords.has(word)) push("keyword", value);
-      // Calls and declarations, including generic ones like `useState<T>(`.
-      else if (/^\s*(?:<[\w\s,.[\]|&]*>)?\s*\(/.test(rest)) push("function", value);
-      else if (/^[A-Z]/.test(word)) push("type", value);
+      else if (CALL_LOOKAHEAD.test(code)) push("function", value);
+      else if (UPPERCASE_START.test(word)) push("type", value);
       else push("plain", value);
     }
     cursor = pattern.lastIndex;
@@ -188,6 +202,13 @@ function tokenize(code: string, grammar: Grammar): Token[] {
 
   if (cursor < code.length) push("plain", code.slice(cursor));
   return tokens;
+}
+
+/** Trims trailing newlines without a regex (`/\n+$/` backtracks quadratically on long runs). */
+function trimTrailingNewlines(value: string): string {
+  let end = value.length;
+  while (end > 0 && (value[end - 1] === "\n" || value[end - 1] === "\r")) end--;
+  return end === value.length ? value : value.slice(0, end);
 }
 
 /* -------------------------------------------------------------------------------------------------
@@ -232,24 +253,27 @@ function CodeBlockImpl({
 }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
 
-  const displayCode = useMemo(() => code.replace(/\n+$/, ""), [code]);
+  const displayCode = useMemo(() => trimTrailingNewlines(code), [code]);
   const lineNumbers = useMemo(() => {
     if (!showLineNumbers) return "";
     const count = displayCode.split("\n").length;
     return Array.from({ length: count }, (_, i) => String(i + 1)).join("\n");
   }, [displayCode, showLineNumbers]);
   const tokens = useMemo(
-    () => (highlight ? tokenize(displayCode, grammarFor(language)) : null),
+    () =>
+      highlight && displayCode.length <= MAX_HIGHLIGHT_CHARS ? tokenize(displayCode, grammarFor(language)) : null,
     [displayCode, language, highlight],
   );
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       if (resetTimer.current) clearTimeout(resetTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -257,7 +281,10 @@ function CodeBlockImpl({
     } catch {
       return;
     }
+    // The clipboard write is async: don't start a timer for a block that has since unmounted.
+    if (!mounted.current) return;
     setCopied(true);
+    AccessibilityInfo.announceForAccessibility("Code copied to clipboard");
     onCopy?.(displayCode);
     if (resetTimer.current) clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
@@ -268,15 +295,17 @@ function CodeBlockImpl({
       <View className={theme.header}>
         <View className={theme.headerLeft}>
           <View className={theme.languageDot} />
-          <Text className={theme.language}>{language || "code"}</Text>
+          <Text className={theme.language} numberOfLines={1}>
+            {language || "code"}
+          </Text>
           {isStreaming ? <Text className={theme.streamingBadge}>writing…</Text> : null}
         </View>
 
         <Pressable
           onPress={handleCopy}
-          hitSlop={8}
+          hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel={copied ? "Code copied" : "Copy code to clipboard"}
+          accessibilityLabel={copied ? "Code copied" : `Copy ${language || "code"} to clipboard`}
           className={theme.copyButton}
         >
           <Animated.View key={copied ? "check" : "copy"} entering={ZoomIn.duration(180)} exiting={ZoomOut.duration(120)}>
