@@ -102,7 +102,7 @@ export function useReanimatedKeyboardHeight(): KeyboardHeight {
   useAnimatedReaction(
     () => animated.value,
     (height) => {
-      if (height > 0) animatedWorks.value = true;
+      if (height > 0) animatedWorks.set(true);
     },
   );
 
@@ -116,10 +116,10 @@ export function useReanimatedKeyboardHeight(): KeyboardHeight {
         Platform.OS === "android"
           ? Dimensions.get("screen").height - event.endCoordinates.screenY
           : event.endCoordinates.height;
-      fallback.value = withTiming(Math.max(0, height), KEYBOARD_FALLBACK_TIMING);
+      fallback.set(withTiming(Math.max(0, height), KEYBOARD_FALLBACK_TIMING));
     });
     const hide = Keyboard.addListener(hideEvent, () => {
-      fallback.value = withTiming(0, KEYBOARD_FALLBACK_TIMING);
+      fallback.set(withTiming(0, KEYBOARD_FALLBACK_TIMING));
     });
     return () => {
       show.remove();
@@ -252,8 +252,11 @@ export function DynamicPromptInput({
   const { height: windowHeight } = useWindowDimensions();
   const effectiveMax = Math.max(minHeight, Math.min(maxHeight, Math.round(windowHeight * MAX_WINDOW_FRACTION)));
 
-  const [scrollEnabled, setScrollEnabled] = useState(false);
-  const contentHeight = useRef(minHeight);
+  // The TextInput's measured content height. Android doesn't always report a size change when
+  // the text is cleared programmatically, so an empty input always counts as one line.
+  const [contentHeight, setContentHeight] = useState(minHeight);
+  const measuredHeight = text.length === 0 ? minHeight : contentHeight;
+  const scrollEnabled = measuredHeight > effectiveMax;
   const inputHeight = useSharedValue(minHeight);
   const buttonScale = useSharedValue(1);
 
@@ -265,31 +268,15 @@ export function DynamicPromptInput({
   const mode: "send" | "stop" = isGenerating ? "stop" : "send";
   const actionEnabled = mode === "stop" ? !!onStop : canSend;
 
-  const applyHeight = useCallback(
-    (measured: number) => {
-      contentHeight.current = measured;
-      inputHeight.value = withTiming(Math.min(effectiveMax, Math.max(minHeight, measured)), GROW_TIMING);
-      setScrollEnabled(measured > effectiveMax);
-    },
-    [effectiveMax, minHeight, inputHeight],
-  );
+  const handleContentSizeChange = useCallback((event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+    setContentHeight(event.nativeEvent.contentSize.height);
+  }, []);
 
-  const handleContentSizeChange = useCallback(
-    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-      applyHeight(event.nativeEvent.contentSize.height);
-    },
-    [applyHeight],
-  );
-
-  // Re-clamp when the cap changes (rotation, split screen, new props).
+  // Ease the input to its clamped height whenever the content or the cap (rotation, split
+  // screen, new props) changes. Only the shared value is written here, never React state.
   useEffect(() => {
-    applyHeight(contentHeight.current);
-  }, [applyHeight]);
-
-  // Android does not always emit a content-size change when the text is cleared programmatically.
-  useEffect(() => {
-    if (text.length === 0) applyHeight(minHeight);
-  }, [text, minHeight, applyHeight]);
+    inputHeight.set(withTiming(Math.min(effectiveMax, Math.max(minHeight, measuredHeight)), GROW_TIMING));
+  }, [measuredHeight, effectiveMax, minHeight, inputHeight]);
 
   const handleChangeText = useCallback(
     (next: string) => {
@@ -364,10 +351,10 @@ export function DynamicPromptInput({
           <Pressable
             onPress={handleActionPress}
             onPressIn={() => {
-              buttonScale.value = withSpring(0.9, PRESS_SPRING);
+              buttonScale.set(withSpring(0.9, PRESS_SPRING));
             }}
             onPressOut={() => {
-              buttonScale.value = withSpring(1, PRESS_SPRING);
+              buttonScale.set(withSpring(1, PRESS_SPRING));
             }}
             disabled={!actionEnabled}
             hitSlop={BUTTON_HIT_SLOP}

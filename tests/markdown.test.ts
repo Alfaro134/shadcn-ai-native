@@ -3,6 +3,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isSafeUrl,
   parseInline,
   parseBlocks,
   parseMarkdown,
@@ -116,6 +117,42 @@ describe("inline, streaming tail", () => {
     ["closed parts still render", "**a** and *b", "B(a) and b"],
   ];
   for (const [name, input, expected] of cases) test(name, () => assert.equal(inl(input, true), expected));
+});
+
+describe("link safety", () => {
+  const safe = ["https://example.com", "http://a.io/x?y=1#z", "HTTPS://EXAMPLE.COM", "mailto:hi@example.com"];
+  const unsafe: Array<[string, string]> = [
+    ["javascript:", "javascript:alert(1)"],
+    ["mixed-case javascript:", "JavaScript:alert(1)"],
+    ["leading space", " javascript:alert(1)"],
+    ["data:", "data:text/html;base64,PHNjcmlwdD4="],
+    ["file:", "file:///etc/passwd"],
+    ["intent:", "intent://scan/#Intent;scheme=zxing;end"],
+    ["custom app scheme", "myapp://deep/link"],
+    ["no slashes", "https:evil.com"],
+    ["no host", "https://"],
+    ["empty host", "https:///path"],
+    ["newline", "https://a.com\nhttps://b.com"],
+    ["NUL", "https://a.com/\u0000"],
+    ["C1 control", "https://a.com/\u0085"],
+    ["line separator", "https://a.com/ "],
+    ["space", "https://a.com/ b"],
+    ["empty mailto", "mailto:"],
+    ["over 2048 chars", "https://a.com/" + "x".repeat(3000)],
+    ["empty", ""],
+  ];
+  for (const url of safe) test(`allows ${url}`, () => assert.equal(isSafeUrl(url), true));
+  for (const [name, url] of unsafe) test(`blocks ${name}`, () => assert.equal(isSafeUrl(url), false));
+
+  test("a link whose target spans a line break keeps only its text", () => assert.equal(inl("[a](https://x.com\nfoo)"), "a"));
+  test("an autolink with a line break is not an autolink", () =>
+    assert.equal(inl("<https://a.com\nb>"), "<L(https://a.com|https://a.com)\nb>"));
+  test("an over-long bare URL is plain text", () => {
+    const long = "https://a.com/" + "x".repeat(3000);
+    assert.equal(inl(long), long);
+  });
+  test("a bare URL with a control character is not linked", () =>
+    assert.equal(inl("https://a.com/\u0001x"), "https://a.com/\u0001x"));
 });
 
 /* -------------------------------------------------------------------------------------------------

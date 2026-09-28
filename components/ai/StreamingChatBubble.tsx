@@ -161,8 +161,9 @@ export type StreamingChatBubbleSlot =
  */
 export interface MarkdownComponents {
   code?: (props: { code: string; language?: string; isStreaming: boolean }) => React.ReactNode;
-  link?: (props: { url: string; children: React.ReactNode; role: ChatRole }) => React.ReactNode;
-  image?: (props: { url: string; alt: string; role: ChatRole }) => React.ReactNode;
+  /** `onPress` opens the URL through `onLinkPress`; the URL is already validated. */
+  link?: (props: { url: string; children: React.ReactNode; role: ChatRole; onPress: () => void }) => React.ReactNode;
+  image?: (props: { url: string; alt: string; role: ChatRole; onPress: () => void }) => React.ReactNode;
   heading?: (props: { level: 1 | 2 | 3 | 4 | 5 | 6; children: React.ReactNode; role: ChatRole }) => React.ReactNode;
   quote?: (props: { children: React.ReactNode; role: ChatRole }) => React.ReactNode;
   /** Just the marker: return e.g. <Text>→</Text> to change bullets. */
@@ -200,6 +201,13 @@ export interface StreamingChatBubbleProps {
   /** Custom renderers for Markdown elements. Same stability note as `avatar`. */
   components?: MarkdownComponents;
   /**
+   * Called when the user taps a link or image in the message. Defaults to `Linking.openURL`.
+   * Model output is untrusted: a reply can show "your-bank.com" and point elsewhere. Use this to
+   * confirm, show the real domain, or open links in an in-app browser. Only http(s) and mailto:
+   * URLs ever reach it.
+   */
+  onLinkPress?: (url: string) => void;
+  /**
    * Replace a part's theme classes (not merged, so no utility conflicts). Prefer this over
    * `className` when changing something the theme already sets, like padding or background.
    */
@@ -217,13 +225,14 @@ interface RenderContext {
   labels: StreamingChatBubbleLabels;
   components: MarkdownComponents;
   cls: (slot: StreamingChatBubbleSlot) => string;
+  openLink: (url: string) => void;
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
 
-function openLink(url: string) {
+function defaultOpenLink(url: string) {
   Linking.openURL(url).catch(() => {});
 }
 
@@ -250,13 +259,13 @@ function renderInline(nodes: Inline[], ctx: RenderContext, keyPrefix = ""): Reac
       case "link": {
         const children = renderInline(node.children, ctx, `${key}.`);
         if (ctx.components.link) {
-          return <React.Fragment key={key}>{ctx.components.link({ url: node.url, children, role: ctx.role })}</React.Fragment>;
+          return <React.Fragment key={key}>{ctx.components.link({ url: node.url, children, role: ctx.role, onPress: () => ctx.openLink(node.url) })}</React.Fragment>;
         }
         return (
           <Text
             key={key}
             className={ctx.cls("link")}
-            onPress={() => openLink(node.url)}
+            onPress={() => ctx.openLink(node.url)}
             accessibilityRole="link"
             accessibilityHint={node.url}
           >
@@ -266,13 +275,13 @@ function renderInline(nodes: Inline[], ctx: RenderContext, keyPrefix = ""): Reac
       }
       case "image": {
         if (ctx.components.image) {
-          return <React.Fragment key={key}>{ctx.components.image({ url: node.url, alt: node.alt, role: ctx.role })}</React.Fragment>;
+          return <React.Fragment key={key}>{ctx.components.image({ url: node.url, alt: node.alt, role: ctx.role, onPress: () => ctx.openLink(node.url) })}</React.Fragment>;
         }
         // Remote images have unknown sizes and would make the bubble jump mid-stream, so by
         // default they render as a link. Pass `components.image` to show them inline.
         const label = node.alt ? `${ctx.labels.image}: ${node.alt}` : ctx.labels.image;
         return (
-          <Text key={key} className={ctx.cls("link")} onPress={() => openLink(node.url)} accessibilityRole="link" accessibilityLabel={label}>
+          <Text key={key} className={ctx.cls("link")} onPress={() => ctx.openLink(node.url)} accessibilityRole="link" accessibilityLabel={label}>
             {`🖼 ${node.alt || ctx.labels.image}`}
           </Text>
         );
@@ -434,14 +443,16 @@ function TypingDot({ delay }: { delay: number }) {
   const progress = useSharedValue(0);
 
   useEffect(() => {
-    progress.value = withDelay(
-      delay,
-      withRepeat(
-        withSequence(
-          withTiming(1, { duration: 320, easing: Easing.out(Easing.quad) }),
-          withTiming(0, { duration: 320, easing: Easing.in(Easing.quad) }),
+    progress.set(
+      withDelay(
+        delay,
+        withRepeat(
+          withSequence(
+            withTiming(1, { duration: 320, easing: Easing.out(Easing.quad) }),
+            withTiming(0, { duration: 320, easing: Easing.in(Easing.quad) }),
+          ),
+          -1,
         ),
-        -1,
       ),
     );
     return () => cancelAnimation(progress);
@@ -486,6 +497,7 @@ function StreamingChatBubbleImpl({
   animateGrowth = true,
   labels: labelOverrides,
   components = NO_COMPONENTS,
+  onLinkPress = defaultOpenLink,
   classNames,
   className,
 }: StreamingChatBubbleProps) {
@@ -503,8 +515,9 @@ function StreamingChatBubbleImpl({
         const entry = theme[slot];
         return typeof entry === "string" ? entry : entry[role];
       },
+      openLink: onLinkPress,
     }),
-    [role, labels, components, classNames],
+    [role, labels, components, classNames, onLinkPress],
   );
 
   // Segments that will actually draw something: a tail that is only "##" has no blocks yet, and a
@@ -534,11 +547,11 @@ function StreamingChatBubbleImpl({
       const next = event.nativeEvent.layout.height;
       if (!hasMeasured.current) {
         hasMeasured.current = true;
-        height.value = next;
+        height.set(next);
         setMeasured(true);
         return;
       }
-      height.value = withTiming(next, { duration: GROW_DURATION_MS, easing: Easing.out(Easing.cubic) });
+      height.set(withTiming(next, { duration: GROW_DURATION_MS, easing: Easing.out(Easing.cubic) }));
     },
     [height],
   );

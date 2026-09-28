@@ -31,8 +31,23 @@ export const MAX_INLINE_DEPTH = 4;
 /** Deepest list nesting kept; deeper items stay at this level. */
 export const MAX_LIST_DEPTH = 3;
 
-/** Link targets that are safe to hand to `Linking.openURL`. */
-const SAFE_URL = /^(?:https?:\/\/|mailto:)/i;
+const SAFE_SCHEME = /^(?:https?:\/\/[^/?#\s]|mailto:[^\s])/i;
+
+/**
+ * True if a link target is safe to hand to `Linking.openURL`: an http(s) URL with a host, or a
+ * mailto: address, with no whitespace or control characters (which could smuggle extra lines or
+ * spoof what the user sees). Everything else — javascript:, file:, intent:, data:, custom app
+ * schemes — renders as plain text. Model output is untrusted input: apps should still let the user
+ * see where a link goes (see `onLinkPress` on StreamingChatBubble).
+ */
+export function isSafeUrl(url: string): boolean {
+  if (url.length === 0 || url.length > 2048 || !SAFE_SCHEME.test(url)) return false;
+  for (let k = 0; k < url.length; k++) {
+    const code = url.charCodeAt(k);
+    if (code <= 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f) || code === 0x2028 || code === 0x2029) return false;
+  }
+  return true;
+}
 
 /* -------------------------------------------------------------------------------------------------
  * Types
@@ -279,9 +294,13 @@ export function parseInline(src: string, open: boolean, depth = 0): Inline[] {
     if (c === "h") {
       const end = scanBareUrl(src, i);
       if (end !== -1) {
-        flush();
         const url = src.slice(i, end);
-        out.push({ type: "link", url, children: [{ type: "text", value: url }] });
+        if (isSafeUrl(url)) {
+          flush();
+          out.push({ type: "link", url, children: [{ type: "text", value: url }] });
+        } else {
+          buffer += url; // too long or has control characters: plain text, and never re-scanned
+        }
         i = end;
         continue;
       }
@@ -293,7 +312,7 @@ export function parseInline(src: string, open: boolean, depth = 0): Inline[] {
       nextAngle = close;
       if (close !== -1) {
         const url = src.slice(i + 1, close);
-        if (SAFE_URL.test(url) && !url.includes(" ")) {
+        if (isSafeUrl(url)) {
           flush();
           out.push({ type: "link", url, children: [{ type: "text", value: url }] });
           i = close + 1;
@@ -370,7 +389,7 @@ export function parseInline(src: string, open: boolean, depth = 0): Inline[] {
         if (paren !== -1) {
           // Drop an optional title: [text](https://x.io "Title").
           const target = src.slice(bracket + 2, paren).trim().split(" ")[0];
-          if (!SAFE_URL.test(target)) {
+          if (!isSafeUrl(target)) {
             labelOnly(); // unsafe schemes (javascript:, file:, …) keep their text but lose the link
           } else if (image) {
             flush();

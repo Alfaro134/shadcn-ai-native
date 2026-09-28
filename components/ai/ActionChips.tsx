@@ -87,10 +87,10 @@ function Chip({ chip, index, initialDelay, stagger, onChipPress }: ChipProps) {
         <Pressable
           onPress={handlePress}
           onPressIn={() => {
-            scale.value = withSpring(0.95, { damping: 15, stiffness: 400 });
+            scale.set(withSpring(0.95, { damping: 15, stiffness: 400 }));
           }}
           onPressOut={() => {
-            scale.value = withSpring(1, { damping: 15, stiffness: 400 });
+            scale.set(withSpring(1, { damping: 15, stiffness: 400 }));
           }}
           disabled={chip.disabled}
           hitSlop={CHIP_HIT_SLOP}

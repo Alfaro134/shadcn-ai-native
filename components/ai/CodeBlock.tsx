@@ -3,6 +3,8 @@ import { AccessibilityInfo, Platform, Pressable, ScrollView, Text, View } from "
 import Animated, { ZoomIn, ZoomOut } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 
+import { highlight as highlightCode, trimTrailingNewlines, type TokenKind } from "./highlight";
+
 /* -------------------------------------------------------------------------------------------------
  * Theme — edit these class strings to restyle the component.
  * -----------------------------------------------------------------------------------------------*/
@@ -44,6 +46,12 @@ const theme = {
 const MONO_FONT = Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" });
 
 const COPIED_RESET_MS = 2000;
+
+/** Default size above which highlighting is skipped: one nested <Text> per token gets expensive. */
+const MAX_HIGHLIGHT_CHARS = 20_000;
+
+// The theme must have a color for every token kind the highlighter emits.
+const SYNTAX: Record<TokenKind, string> = theme.syntax;
 
 /* -------------------------------------------------------------------------------------------------
  * Types
@@ -111,146 +119,6 @@ function cx(...classes: Array<string | false | null | undefined>): string {
 }
 
 /* -------------------------------------------------------------------------------------------------
- * Syntax highlighter — a single-pass regex tokenizer. Not a parser: it aims for "looks right"
- * on the snippets an assistant typically returns, with zero dependencies.
- * -----------------------------------------------------------------------------------------------*/
-
-type TokenKind = keyof typeof theme.syntax;
-
-interface Token {
-  kind: TokenKind;
-  value: string;
-}
-
-const JS_KEYWORDS =
-  "abstract as async await break case catch class const continue debugger default delete do else enum export extends false finally for from function get if implements import in instanceof interface keyof let new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while with yield";
-const PYTHON_KEYWORDS =
-  "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return self True try while with yield";
-const SHELL_KEYWORDS =
-  "if then else elif fi for in do done case esac while until function return export local echo cd sudo npm npx yarn pnpm bun git";
-const GENERIC_KEYWORDS = `${JS_KEYWORDS} ${PYTHON_KEYWORDS} fn mut pub impl struct trait use mod match func package go defer chan map int float bool string char long short unsigned`;
-
-type CommentStyle = "slash" | "hash";
-
-interface Grammar {
-  keywords: Set<string>;
-  pattern: RegExp;
-}
-
-const STRING_PATTERN = String.raw`"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|` + "`(?:[^`\\\\]|\\\\[\\s\\S])*`?";
-const NUMBER_PATTERN = String.raw`\b(?:0[xX][\da-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b`;
-const WORD_PATTERN = String.raw`[A-Za-z_$][\w$]*`;
-const COMMENT_PATTERNS: Record<CommentStyle, string> = {
-  slash: String.raw`\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)`,
-  hash: String.raw`#[^\n]*`,
-};
-
-function createGrammar(keywords: string, comments: CommentStyle): Grammar {
-  return {
-    keywords: new Set(keywords.split(" ")),
-    // Group order matters: comments win over strings, strings over numbers and words.
-    pattern: new RegExp(`(${COMMENT_PATTERNS[comments]})|(${STRING_PATTERN})|(${NUMBER_PATTERN})|(${WORD_PATTERN})`, "g"),
-  };
-}
-
-const GRAMMARS = {
-  js: createGrammar(JS_KEYWORDS, "slash"),
-  python: createGrammar(PYTHON_KEYWORDS, "hash"),
-  shell: createGrammar(SHELL_KEYWORDS, "hash"),
-  hashGeneric: createGrammar(GENERIC_KEYWORDS, "hash"),
-  generic: createGrammar(GENERIC_KEYWORDS, "slash"),
-} as const;
-
-function grammarFor(language?: string): Grammar {
-  switch ((language ?? "").toLowerCase()) {
-    case "js":
-    case "jsx":
-    case "ts":
-    case "tsx":
-    case "javascript":
-    case "typescript":
-    case "json":
-      return GRAMMARS.js;
-    case "py":
-    case "python":
-      return GRAMMARS.python;
-    case "sh":
-    case "bash":
-    case "zsh":
-    case "shell":
-    case "console":
-      return GRAMMARS.shell;
-    case "rb":
-    case "ruby":
-    case "yml":
-    case "yaml":
-    case "toml":
-      return GRAMMARS.hashGeneric;
-    default:
-      return GRAMMARS.generic;
-  }
-}
-
-/**
- * Matches a call or declaration right after an identifier, including generic ones like
- * `useState<T>(`. Sticky (`y`) so it runs in place at the identifier's end instead of on a copy
- * of the rest of the string. Linear-time by construction: the leading whitespace run can only be
- * followed by `<` or `(`, the generic body can't contain `>` and is capped at 64 chars.
- */
-const CALL_LOOKAHEAD = /[ \t]*(?:<[\w ,.[\]|&]{0,64}>[ \t]*)?\(/y;
-const UPPERCASE_START = /^[A-Z]/;
-
-/** Default size above which highlighting is skipped: one nested <Text> per token gets expensive. */
-const MAX_HIGHLIGHT_CHARS = 20_000;
-
-function tokenize(code: string, grammar: Grammar): Token[] {
-  const tokens: Token[] = [];
-  const push = (kind: TokenKind, value: string) => {
-    const last = tokens[tokens.length - 1];
-    if (last && last.kind === kind) last.value += value;
-    else tokens.push({ kind, value });
-  };
-
-  // Every alternative in the grammar is linear-time: character classes in the string patterns are
-  // mutually exclusive, and comments and strings run to their terminator or end of input.
-  const pattern = grammar.pattern;
-  pattern.lastIndex = 0;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    if (match[0].length === 0) {
-      pattern.lastIndex++;
-      continue;
-    }
-    if (match.index > cursor) push("plain", code.slice(cursor, match.index));
-
-    const [value, comment, string, number, word] = match;
-    if (comment) push("comment", value);
-    else if (string) push("string", value);
-    else if (number) push("number", value);
-    else if (word) {
-      CALL_LOOKAHEAD.lastIndex = pattern.lastIndex;
-      if (grammar.keywords.has(word)) push("keyword", value);
-      else if (CALL_LOOKAHEAD.test(code)) push("function", value);
-      else if (UPPERCASE_START.test(word)) push("type", value);
-      else push("plain", value);
-    }
-    cursor = pattern.lastIndex;
-  }
-
-  if (cursor < code.length) push("plain", code.slice(cursor));
-  return tokens;
-}
-
-/** Trims trailing newlines without a regex (`/\n+$/` backtracks quadratically on long runs). */
-function trimTrailingNewlines(value: string): string {
-  let end = value.length;
-  while (end > 0 && (value[end - 1] === "\n" || value[end - 1] === "\r")) end--;
-  return end === value.length ? value : value.slice(0, end);
-}
-
-/* -------------------------------------------------------------------------------------------------
  * Icons
  * -----------------------------------------------------------------------------------------------*/
 
@@ -305,7 +173,7 @@ function CodeBlockImpl({
   }, [displayCode, showLineNumbers]);
   const tooLarge = highlight && displayCode.length > maxHighlightChars;
   const tokens = useMemo(
-    () => (highlight && !tooLarge ? tokenize(displayCode, grammarFor(language)) : null),
+    () => (highlight && !tooLarge ? highlightCode(displayCode, language) : null),
     [displayCode, language, highlight, tooLarge],
   );
 
@@ -371,7 +239,7 @@ function CodeBlockImpl({
                   token.kind === "plain" ? (
                     token.value
                   ) : (
-                    <Text key={i} className={theme.syntax[token.kind]}>
+                    <Text key={i} className={SYNTAX[token.kind]}>
                       {token.value}
                     </Text>
                   ),

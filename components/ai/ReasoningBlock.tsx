@@ -115,15 +115,17 @@ function useThinkingPulse(active: boolean) {
   useEffect(() => {
     if (!active) {
       cancelAnimation(pulse);
-      pulse.value = withTiming(1, { duration: 200 });
+      pulse.set(withTiming(1, { duration: 200 }));
       return;
     }
-    pulse.value = withRepeat(
-      withSequence(
-        withTiming(0.45, { duration: 700, easing: Easing.inOut(Easing.quad) }),
-        withTiming(1, { duration: 700, easing: Easing.inOut(Easing.quad) }),
+    pulse.set(
+      withRepeat(
+        withSequence(
+          withTiming(0.45, { duration: 700, easing: Easing.inOut(Easing.quad) }),
+          withTiming(1, { duration: 700, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
       ),
-      -1,
     );
     return () => cancelAnimation(pulse);
   }, [active, pulse]);
@@ -150,10 +152,11 @@ function ReasoningBlockImpl({
   const [open, setOpen] = useState(defaultOpen ?? isStreaming);
   const userToggled = useRef(false);
 
-  // Time the stream when no duration is supplied.
-  const startedAt = useRef<number | null>(isStreaming ? Date.now() : null);
+  // Time the stream when no duration is supplied. Starting from "not streaming" makes a block
+  // that mounts mid-stream start its clock in the effect below, not during render.
+  const startedAt = useRef<number | null>(null);
   const [measuredSeconds, setMeasuredSeconds] = useState<number | undefined>(undefined);
-  const wasStreaming = useRef(isStreaming);
+  const wasStreaming = useRef(false);
 
   useEffect(() => {
     if (isStreaming && !wasStreaming.current) {
@@ -178,7 +181,7 @@ function ReasoningBlockImpl({
   const hasMeasured = useRef(false);
 
   useEffect(() => {
-    progress.value = withTiming(open ? 1 : 0, { duration: TOGGLE_DURATION_MS, easing: Easing.out(Easing.cubic) });
+    progress.set(withTiming(open ? 1 : 0, { duration: TOGGLE_DURATION_MS, easing: Easing.out(Easing.cubic) }));
   }, [open, progress]);
 
   const onContentLayout = useCallback(
@@ -186,11 +189,11 @@ function ReasoningBlockImpl({
       const next = event.nativeEvent.layout.height;
       if (!hasMeasured.current) {
         hasMeasured.current = true;
-        contentHeight.value = next;
+        contentHeight.set(next);
         return;
       }
       // Streaming thoughts grow the body; ease into each new line like the chat bubble does.
-      contentHeight.value = withTiming(next, { duration: GROW_DURATION_MS, easing: Easing.out(Easing.cubic) });
+      contentHeight.set(withTiming(next, { duration: GROW_DURATION_MS, easing: Easing.out(Easing.cubic) }));
     },
     [contentHeight],
   );
