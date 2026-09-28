@@ -7,5 +7,5 @@
       "*": ["./node_modules/@types/*", "./node_modules/*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", "../components/**/*.tsx", "nativewind-env.d.ts", "css.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx", "../components/**/*.ts", "../components/**/*.tsx", "nativewind-env.d.ts", "css.d.ts"]
 }
