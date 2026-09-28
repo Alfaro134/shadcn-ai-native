@@ -53,6 +53,7 @@ You end up rebuilding the same four components in every project, and they rarely
 | --- | --- |
 | [`StreamingChatBubble`](./components/ai/StreamingChatBubble.tsx) | User/assistant message bubble with smooth streaming growth and Markdown. Code fences render as `<CodeBlock />`. `header` and `footer` slots. |
 | [`markdown.ts`](./components/ai/markdown.ts) | The streaming-safe Markdown parser behind the bubble. Pure TypeScript, no React, usable on its own. |
+| [`highlight.ts`](./components/ai/highlight.ts) | The best-effort syntax highlighter behind `CodeBlock`. Pure TypeScript, no React. |
 | [`ReasoningBlock`](./components/ai/ReasoningBlock.tsx) | Collapsible "Thinking…" accordion for a model's reasoning. Times itself while streaming, then collapses to "Thought for N seconds". Pass it as the bubble's `header`. |
 | [`CodeBlock`](./components/ai/CodeBlock.tsx) | Dark code block with language header, best-effort highlighting, horizontal scroll, optional line numbers and copy-to-clipboard. |
 | [`DynamicPromptInput`](./components/ai/DynamicPromptInput.tsx) | Chat input with auto-grow, keyboard avoidance, attach button and a Send ⇄ Stop button. |
@@ -151,12 +152,13 @@ BASE=https://raw.githubusercontent.com/Alfaro134/shadcn-ai-native/main/component
 curl -O $BASE/StreamingChatBubble.tsx
 curl -O $BASE/markdown.ts            # required by StreamingChatBubble
 curl -O $BASE/CodeBlock.tsx          # required by StreamingChatBubble
+curl -O $BASE/highlight.ts           # required by CodeBlock
 curl -O $BASE/ReasoningBlock.tsx
 curl -O $BASE/DynamicPromptInput.tsx
 curl -O $BASE/ActionChips.tsx
 ```
 
-Each file stands on its own, except `StreamingChatBubble`, which imports `./markdown` and `./CodeBlock`.
+Each component stands on its own, except for these imports: `StreamingChatBubble` → `./markdown` and `./CodeBlock`, and `CodeBlock` → `./highlight`.
 
 ## 💬 Usage example
 
@@ -257,7 +259,7 @@ Remember to wrap your app in keyboard-controller's `<KeyboardProvider>`.
 | Lists | `-` `*` `+` bullets, `1.` / `1)` ordered, nested by indentation, `- [ ]` / `- [x]` task lists |
 | Blockquotes | `> quote` (one level) |
 | Tables | GFM pipe tables with `:---`, `:---:`, `---:` alignment, scrollable horizontally |
-| Links | `[text](https://…)`, `<https://…>`, bare `https://…` URLs. Only `http(s)` and `mailto:` are pressable |
+| Links | `[text](https://…)`, `<https://…>`, bare `https://…` URLs. Only `http(s)` and `mailto:` are pressable, and `onLinkPress` lets your app intercept every tap ([why](./SECURITY.md#threat-model)) |
 | Images | `![alt](https://…)`, rendered **as a link** by default (remote images would make the bubble jump mid-stream). Use `components.image` to render them inline |
 | Rules | `---`, `***`, `___` |
 | Escapes | `\*`, `\[`, `\|` … |
@@ -316,7 +318,7 @@ Layouts use left/right styles, which React Native mirrors automatically in RTL (
 
 ## 📱 Run the demo
 
-The [`example/`](./example) folder is an Expo SDK 57 app. It imports the components straight from `../components`, the same way your app would after pasting them in.
+The [`example/`](./example) folder is an Expo SDK 57 app. It imports the components straight from `../components`, the same way your app would after pasting them in. It's organized with Clean Architecture, and plugging in a real model means writing one adapter: see [ARCHITECTURE.md](./ARCHITECTURE.md#using-a-real-model).
 
 ```bash
 cd example
@@ -343,12 +345,22 @@ Cost grows linearly with message length: there is no backtracking regex, and 100
 ## 🧪 Tests
 
 ```bash
-npm test           # Markdown parser: unit tests, every-prefix streaming property, fuzzing, timing
-npm run bench      # parser benchmarks
+npm install        # repo tooling only (ESLint, TypeScript); the kit itself adds no dependency
+npm run check      # everything below
+npm run lint       # ESLint, including the React Hooks and React Compiler rules
+npm test           # 176 tests: see below
 npm run typecheck  # needs `npm install` in example/ first
+npm run bench      # parser benchmarks
 ```
 
-Tests use Node's built-in runner (Node ≥ 22.18), so the repo has **no dev dependencies**. CI runs them and the type check on every push. There are no visual regression tests yet: UI changes are checked by hand in the example app.
+Tests use Node's built-in runner (Node ≥ 22.18), with no test framework:
+
+- **Markdown parser:** unit tests, a property test over every streaming prefix of realistic replies, 5,000 fuzzed documents, link-safety cases and linear-time checks on adversarial input.
+- **Syntax highlighter:** grammar tests, a round-trip check, and linear-time checks.
+- **Example app use cases:** `ChatSession` (send, stop, regenerate, errors, stale events) against a fake model.
+- **Architecture:** the dependency rules in [ARCHITECTURE.md](./ARCHITECTURE.md), checked on every import.
+
+CI runs lint, tests, `npm audit` and the type check on every push. There are no visual regression tests yet: UI changes are checked by hand in the example app.
 
 ## ✅ Compatibility
 
@@ -377,7 +389,7 @@ Then features:
 - [ ] Attachment previews · Voice input · Message editing
 - [ ] **CLI:** `npx shadcn-ai-native add <component>`, once the component APIs are stable
 
-See the [changelog](./CHANGELOG.md) for what changed in each version. Have an idea? [Open an issue](https://github.com/Alfaro134/shadcn-ai-native/issues). PRs are welcome!
+See the [changelog](./CHANGELOG.md) for what changed in each version, [ARCHITECTURE.md](./ARCHITECTURE.md) for how the code is organized, and [SECURITY.md](./SECURITY.md) for the threat model and how to report a vulnerability. Have an idea? [Open an issue](https://github.com/Alfaro134/shadcn-ai-native/issues). PRs are welcome!
 
 ## 🤝 Contributing
 
@@ -385,7 +397,8 @@ Contributions are welcome, especially new components (message actions, attachmen
 
 1. Keep components **copy-paste friendly**: no new runtime dependencies, and pure logic in its own file (like `markdown.ts`) so it can be tested.
 2. Put all styling in the file's `theme` object with `dark:` variants, and every string in `labels`.
-3. Run `npm test` and `npm run typecheck`, and try your change in the `example/` app on both iOS and Android.
+3. Respect the dependency rules in [ARCHITECTURE.md](./ARCHITECTURE.md) (a test enforces them).
+4. Run `npm run check`, and try your change in the `example/` app on both iOS and Android.
 
 ## 📄 License
 
