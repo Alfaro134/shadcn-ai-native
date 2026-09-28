@@ -1,0 +1,16 @@
+{
+  "name": "shadcn-ai-native",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Copy-paste AI chat components for React Native & Expo. Not published to npm: copy the files in components/ai.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "bench": "node scripts/bench-markdown.ts",
+    "typecheck": "cd example && npx tsc --noEmit"
+  }
+}
