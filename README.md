@@ -247,6 +247,15 @@ npx expo start
 
 Scan the QR code with **Expo Go**, or press `i` / `a` for a simulator. The demo streams simulated AI replies, including a highlighted code block, so you can try everything without an API key.
 
+## 🗺️ Roadmap
+
+- [ ] **Markdown rendering:** lists, headings, links, tables and blockquotes, streaming-safe with no dependencies
+- [ ] **CLI:** `npx shadcn-ai-native add <component>` with automatic dependency handling
+- [ ] **AI SDK recipe:** a ready-made example with the Vercel AI SDK `useChat`, plus a collapsible reasoning / tool-call block
+- [ ] Attachment previews · Voice input · Message editing
+
+Have an idea? [Open an issue](https://github.com/Alfaro134/shadcn-ai-native/issues). PRs are welcome!
+
 ## 🤝 Contributing
 
 Contributions are welcome, especially new components (message actions, attachment previews, markdown tables, voice input…). Please:
