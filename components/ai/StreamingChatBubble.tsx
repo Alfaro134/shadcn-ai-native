@@ -255,7 +255,10 @@ function StreamingChatBubbleImpl({
         {role === "assistant" && avatar ? avatar : null}
 
         <View className={theme.column[role]}>
-          <Animated.View style={[{ overflow: "hidden" }, heightStyle]}>
+          {/* "scroll" clips like "hidden", but Yoga only measures children unconstrained by this
+              view's (animated) height when overflow is "scroll". With "hidden" the content is
+              capped at the current height, never reports growing, and the bubble freezes. */}
+          <Animated.View style={[{ overflow: "scroll" }, heightStyle]}>
             <View
               onLayout={onContentLayout}
               className={cx(theme.bubble[role], className)}

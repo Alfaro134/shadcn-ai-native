@@ -17,6 +17,9 @@ const theme = {
   copyButton: "flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 active:bg-zinc-800",
   copyLabel: "text-xs font-medium text-zinc-400",
   copiedLabel: "text-xs font-medium text-emerald-400",
+  // ScrollView defaults to flexGrow: 1. Inside an auto-height bubble on Android that makes it
+  // claim the list's free space, which grows the list, which grows the bubble — forever.
+  scroll: "flex-grow-0",
   body: "flex-row px-4 py-3.5",
   code: "text-[13px] leading-5 text-zinc-100",
   lineNumbers: "mr-4 text-right text-[13px] leading-5 text-zinc-600",
@@ -315,7 +318,7 @@ function CodeBlockImpl({
         </Pressable>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} className={theme.scroll}>
         <View className={theme.body}>
           {showLineNumbers ? (
             <Text className={theme.lineNumbers} style={{ fontFamily: MONO_FONT }} selectable={false}>
