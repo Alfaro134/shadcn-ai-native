@@ -162,51 +162,65 @@ Each component stands on its own, except for these imports: `StreamingChatBubble
 
 ## 💬 Usage example
 
-A complete chat screen in about 40 lines:
+A complete chat screen:
 
 ```tsx
+import { memo, useCallback, useMemo } from "react";
 import { FlatList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ActionChips } from "@/components/ai/ActionChips";
+import { ActionChips, type ActionChip } from "@/components/ai/ActionChips";
 import { DynamicPromptInput } from "@/components/ai/DynamicPromptInput";
 import { StreamingChatBubble } from "@/components/ai/StreamingChatBubble";
+
+type Message = { id: string; role: "user" | "assistant"; content: string };
+
+interface RowProps {
+  message: Message;
+  isStreaming: boolean;
+  chips?: ActionChip[];
+}
+
+// Memoized, so a streamed token re-renders only the row whose message changed.
+const MessageRow = memo(function MessageRow({ message, isStreaming, chips }: RowProps) {
+  // The bubble is memoized too: an inline `footer` element would re-render it on every token.
+  const footer = useMemo(() => (chips ? <ActionChips chips={chips} contentContainerClassName="px-0" /> : null), [chips]);
+  return <StreamingChatBubble role={message.role} content={message.content} isStreaming={isStreaming} footer={footer} />;
+});
+
+const keyExtractor = (message: Message) => message.id;
+const openPicker = () => {/* open a file or image picker */};
 
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { messages, streamingId, send, stop, regenerate } = useYourChat(); // your AI hook
 
+  const data = useMemo(() => [...messages].reverse(), [messages]); // inverted list: newest first
+  const chips = useMemo<ActionChip[]>(
+    () => [
+      { id: "regen", label: "Regenerate", onPress: regenerate },
+      { id: "simpler", label: "Explain simpler", onPress: () => send("Explain that simpler") },
+    ],
+    [regenerate, send],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: Message }) => {
+      const isStreaming = item.id === streamingId;
+      const showChips = item.role === "assistant" && !isStreaming;
+      return <MessageRow message={item} isStreaming={isStreaming} chips={showChips ? chips : undefined} />;
+    },
+    [streamingId, chips],
+  );
+
   return (
     <View className="flex-1 bg-white dark:bg-zinc-950">
-      <FlatList
-        inverted
-        data={[...messages].reverse()}
-        keyExtractor={(m) => m.id}
-        keyboardDismissMode="interactive"
-        renderItem={({ item }) => (
-          <StreamingChatBubble
-            role={item.role}
-            content={item.content}
-            isStreaming={item.id === streamingId}
-            footer={
-              item.role === "assistant" && item.id !== streamingId ? (
-                <ActionChips
-                  contentContainerClassName="px-0"
-                  chips={[
-                    { id: "regen", label: "Regenerate", onPress: regenerate },
-                    { id: "simpler", label: "Explain simpler", onPress: () => send("Explain that simpler") },
-                  ]}
-                />
-              ) : null
-            }
-          />
-        )}
-      />
+      <FlatList inverted data={data} keyExtractor={keyExtractor} renderItem={renderItem} keyboardDismissMode="interactive" />
 
       <DynamicPromptInput
         onSend={send}
         onStop={stop}
-        onAttach={() => {/* open a picker */}}
+        onAttach={openPicker}
         isGenerating={streamingId !== null}
         bottomInset={insets.bottom}
       />
@@ -214,6 +228,12 @@ export default function ChatScreen() {
   );
 }
 ```
+
+The `memo` / `useMemo` / `useCallback` calls are what keep streaming smooth: every token updates
+`messages`, and without them every bubble in the list would re-render on every token.
+They assume your chat hook returns stable `send` / `regenerate` functions and keeps the same
+object for messages that didn't change (immutable updates do). The [example app](./example/src/ui)
+goes further: only the streaming row subscribes to token updates, so the list doesn't re-render at all.
 
 `CodeBlock` can also be used on its own:
 

@@ -57,6 +57,9 @@ re-copying a file.
 
 ### Fixed
 
+- README usage example: it passed an inline `footer`, chips array and reversed list, which
+  re-rendered every memoized bubble on every streamed token. It now uses a memoized row,
+  `useMemo` and `useCallback`, like the example app.
 - `DynamicPromptInput` no longer writes a ref during render, which is unsafe with concurrent
   rendering.
 - `DynamicPromptInput` stayed hidden behind the keyboard on older Android versions (verified on
