@@ -1,0 +1,14 @@
+# Run with the simulator in dark appearance (`xcrun simctl ui booted appearance dark`): every
+# component has `dark:` variants, and this captures them with a reasoning block and code.
+appId: dev.alfaro134.shadcnainative.example
+name: Dark mode
+---
+- launchApp:
+    clearState: true
+- assertVisible: "How can I help today?"
+- takeScreenshot: 08-dark-empty-state
+- tapOn: "Write a debounce hook in TypeScript"
+- extendedWaitUntil:
+    visible: ".*Regenerate"
+    timeout: 60000
+- takeScreenshot: 09-dark-reply-with-code

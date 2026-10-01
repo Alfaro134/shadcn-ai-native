@@ -1,0 +1,42 @@
+# Smoke test of the example app on a simulator: streaming, Markdown, the keyboard and the
+# action chips. Run it with `maestro test example/.maestro` against a build of the example app.
+# The screenshots are what a human reviews; the assertions only catch a broken flow.
+appId: dev.alfaro134.shadcnainative.example
+name: Chat
+---
+- launchApp:
+    clearState: true
+- assertVisible: "How can I help today?"
+- takeScreenshot: 01-empty-state
+
+# Reasoning block, then a streamed reply with a highlighted code block.
+- tapOn: "Write a debounce hook in TypeScript"
+- assertVisible: "Thinking.*"
+- takeScreenshot: 02-thinking
+- extendedWaitUntil:
+    visible: ".*Regenerate"
+    timeout: 60000
+- takeScreenshot: 03-reply-with-code
+
+# The input must sit right above the keyboard and grow with the text.
+- tapOn: "Message Assistant"
+- inputText: "Does the input follow the keyboard on iOS? This line is long enough to wrap onto a second one."
+- takeScreenshot: 04-keyboard-open
+- tapOn: "Send message"
+- extendedWaitUntil:
+    visible: ".*Regenerate"
+    timeout: 60000
+- hideKeyboard
+- takeScreenshot: 05-second-reply
+
+# The messy Markdown cases: table, task list, ~~~ fence, image, raw HTML, broken link.
+- tapOn: "New chat"
+- tapOn: "Stress-test the Markdown"
+- extendedWaitUntil:
+    visible: ".*Regenerate"
+    timeout: 90000
+- takeScreenshot: 06-markdown-stress-bottom
+# The list is inverted: swiping down reveals the start of the reply.
+- swipe:
+    direction: DOWN
+- takeScreenshot: 07-markdown-stress-top
