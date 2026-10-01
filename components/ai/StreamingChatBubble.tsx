@@ -251,9 +251,12 @@ function renderInline(nodes: Inline[], ctx: RenderContext, keyPrefix = ""): Reac
           </Text>
         );
       case "code":
+        // Non-breaking spaces keep a short span on one line: a nested Text's background can't be
+        // rounded or split, so a span wrapped at a space draws two touching boxes. A span longer
+        // than a line still wraps, between characters.
         return (
           <Text key={key} className={ctx.cls("inlineCode")}>
-            {` ${node.value} `}
+            {` ${node.value.replace(/ /g, " ")} `}
           </Text>
         );
       case "link": {

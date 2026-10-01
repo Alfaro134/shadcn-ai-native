@@ -57,6 +57,8 @@ re-copying a file.
 
 ### Fixed
 
+- `StreamingChatBubble`: short inline code no longer wraps at its spaces. A wrapped span drew two
+  touching background boxes, most visibly on iOS.
 - README usage example: it passed an inline `footer`, chips array and reversed list, which
   re-rendered every memoized bubble on every streamed token. It now uses a memoized row,
   `useMemo` and `useCallback`, like the example app.
