@@ -20,6 +20,8 @@ concurrency:
 
 env:
   MAESTRO_VERSION: 2.11.0
+  # The XCTest driver takes ~80 s to start on a cold runner, close to Maestro's default limit.
+  MAESTRO_DRIVER_STARTUP_TIMEOUT: 180000
   OUT: ${{ github.workspace }}/maestro-output
 
 jobs:
