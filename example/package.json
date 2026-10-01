@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
-    "expo": "~57.0.25",
+    "expo": "~57.0.26",
     "expo-clipboard": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "nativewind": "^4.2.7",
