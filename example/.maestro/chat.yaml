@@ -21,7 +21,8 @@ name: Chat
 - takeScreenshot: 03-reply-with-code
 
 # The input must sit right above the keyboard and grow with the text.
-- tapOn: "Message Assistant"
+- tapOn:
+    id: "prompt-input"
 - inputText: "Does the input follow the keyboard on iOS? This line is long enough to wrap onto a second one."
 - takeScreenshot: 04-keyboard-open
 - tapOn: "Send message"

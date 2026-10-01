@@ -23,6 +23,10 @@ const SUGGESTIONS: ActionChip[] = [
 
 const keyExtractor = (message: Message) => message.id;
 
+// For the Maestro flows in example/.maestro: on iOS a multiline input's placeholder isn't exposed
+// as text, so tests find the input by its id.
+const INPUT_PROPS = { testID: "prompt-input" };
+
 function showAttachHint() {
   Alert.alert("Attachments", "Hook up your file or image picker in the onAttach prop.");
 }
@@ -112,6 +116,7 @@ export function ChatScreen({ model }: { model: ChatModel }) {
         onAttach={showAttachHint}
         isGenerating={streamingId !== null}
         placeholder="Message Assistant"
+        inputProps={INPUT_PROPS}
         bottomInset={insets.bottom}
         accessory={isEmpty ? suggestionChips : null}
       />
