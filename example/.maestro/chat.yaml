@@ -24,12 +24,17 @@ name: Chat
 - tapOn:
     id: "prompt-input"
 - inputText: "Does the input follow the keyboard on iOS? This line is long enough to wrap onto a second one."
+- waitForAnimationToEnd
 - takeScreenshot: 04-keyboard-open
 - tapOn: "Send message"
 - extendedWaitUntil:
     visible: ".*Regenerate"
     timeout: 60000
-- hideKeyboard
+# Maestro's hideKeyboard is unreliable on iOS; drag the list down, like a user would
+# (keyboardDismissMode="interactive").
+- swipe:
+    start: 50%, 35%
+    end: 50%, 75%
 - takeScreenshot: 05-second-reply
 
 # The messy Markdown cases: table, task list, ~~~ fence, image, raw HTML, broken link.
