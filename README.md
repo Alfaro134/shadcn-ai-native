@@ -32,22 +32,22 @@ You end up rebuilding the same four components in every project, and they rarely
 
 **shadcn-ai-native** gives you those components, done right, as plain `.tsx` files you **own**. It follows the [shadcn/ui](https://ui.shadcn.com) approach: no npm package, no version lock-in, no hidden styles. Copy a file into your project and change anything you like.
 
-## ✨ Features
+## Features
 
-- 🌊 **Smooth streaming.** Bubbles ease into their new height on every chunk instead of snapping. There's a blinking caret while tokens arrive and a typing indicator before the first one.
-- 📝 **Streaming-safe Markdown, zero dependencies.** A [documented subset of GitHub Flavored Markdown](#-markdown-support): headings, lists, task lists, tables, blockquotes, links, images, bold/italic/strikethrough, code. While a reply streams, half-written markup isn't shown raw: `**bold te` renders as `bold te` and `[Google](http…` as `Google` until the closing marker arrives. [Tested](#-tests) against every prefix of real-looking replies, fuzzed, and [benchmarked](#-performance).
-- 🧠 **Reasoning block.** A collapsible "Thinking…" / "Thought for 4 seconds" accordion for reasoning models, animated with Reanimated.
-- 🎨 **Best-effort syntax highlighting.** A small regex highlighter tuned for JS/TS/JSON, Python and shell, with a generic fallback for other languages. **No highlighting library.** Very large blocks show a "plain text" badge instead of silently losing their colors.
-- 📋 **One-tap copy.** Code blocks copy to the clipboard with an animated ✓ confirmation.
-- ⌨️ **Keyboard handling on both platforms.** The prompt input follows the keyboard frame by frame on the UI thread, including on Android edge-to-edge, and the keyboard source is [swappable](#keyboard-handling).
-- 📏 **Auto-growing input.** Grows line by line up to a max height, then scrolls. The action button switches between **Send** and **Stop generating**.
-- 🪄 **Animated action chips.** "Regenerate", "Copy", "Explain simpler" and your own chips fade in and slide up one after another.
-- 🌍 **Translatable.** Every visible or announced string is a `labels` prop.
-- 🌗 **Dark mode.** Every class has a `dark:` variant and follows the system theme.
-- 🧩 **Few dependencies.** Only React Native, NativeWind and Reanimated, plus `expo-clipboard` for the code block. Works in **Expo Go**.
-- 🎛️ **Restyle without forking.** A `theme` object per file, `classNames` to replace single parts, and `components` to swap how Markdown elements render.
+- **Smooth streaming.** Bubbles ease into their new height on every chunk instead of snapping. There's a blinking caret while tokens arrive and a typing indicator before the first one.
+- **Streaming-safe Markdown, zero dependencies.** A [documented subset of GitHub Flavored Markdown](#markdown-support): headings, lists, task lists, tables, blockquotes, links, images, bold/italic/strikethrough, code. While a reply streams, half-written markup isn't shown raw: `**bold te` renders as `bold te` and `[Google](http…` as `Google` until the closing marker arrives. [Tested](#tests) against every prefix of real-looking replies, fuzzed, and [benchmarked](#performance).
+- **Reasoning block.** A collapsible "Thinking…" / "Thought for 4 seconds" accordion for reasoning models, animated with Reanimated.
+- **Best-effort syntax highlighting.** A small regex highlighter tuned for JS/TS/JSON, Python and shell, with a generic fallback for other languages. **No highlighting library.** Very large blocks show a "plain text" badge instead of silently losing their colors.
+- **One-tap copy.** Code blocks copy to the clipboard with an animated ✓ confirmation.
+- **Keyboard handling on both platforms.** The prompt input follows the keyboard frame by frame on the UI thread, including on Android edge-to-edge, and the keyboard source is [swappable](#keyboard-handling).
+- **Auto-growing input.** Grows line by line up to a max height, then scrolls. The action button switches between **Send** and **Stop generating**.
+- **Animated action chips.** "Regenerate", "Copy", "Explain simpler" and your own chips fade in and slide up one after another.
+- **Translatable.** Every visible or announced string is a `labels` prop.
+- **Dark mode.** Every class has a `dark:` variant and follows the system theme.
+- **Few dependencies.** Only React Native, NativeWind and Reanimated, plus `expo-clipboard` for the code block. Works in **Expo Go**.
+- **Restyle without forking.** A `theme` object per file, `classNames` to replace single parts, and `components` to swap how Markdown elements render.
 
-## 🧱 Components
+## Components
 
 | File | What it does |
 | --- | --- |
@@ -59,7 +59,7 @@ You end up rebuilding the same four components in every project, and they rarely
 | [`DynamicPromptInput`](./components/ai/DynamicPromptInput.tsx) | Chat input with auto-grow, keyboard avoidance, attach button and a Send ⇄ Stop button. |
 | [`ActionChips`](./components/ai/ActionChips.tsx) | Horizontal row of suggestion chips with a staggered entrance animation. |
 
-## 🚀 Installation
+## Installation
 
 > Already using NativeWind v4 and Reanimated? Skip to [step 3](#3-install-expo-clipboard).
 
@@ -160,7 +160,7 @@ curl -O $BASE/ActionChips.tsx
 
 Each component stands on its own, except for these imports: `StreamingChatBubble` → `./markdown` and `./CodeBlock`, and `CodeBlock` → `./highlight`.
 
-## 💬 Usage example
+## Usage example
 
 A complete chat screen:
 
@@ -267,7 +267,7 @@ function useKeyboardControllerHeight() {
 
 Remember to wrap your app in keyboard-controller's `<KeyboardProvider>`.
 
-## 📝 Markdown support
+## Markdown support
 
 `StreamingChatBubble` renders a subset of [GitHub Flavored Markdown](https://github.github.com/gfm/). Anything outside it renders as plain text, never as a crash or a broken layout.
 
@@ -288,7 +288,7 @@ Remember to wrap your app in keyboard-controller's `<KeyboardProvider>`.
 
 **While streaming**, only the tail of the message is treated as unfinished. An opener without its closer hides its marker until the closer arrives, and a last line that is only a block marker so far (`##`, `-`, `1.`, `|`) waits for its text. Once the message is complete, unclosed markers render literally, so `5 * 3` keeps its asterisk.
 
-## 🎨 Customization
+## Customization
 
 There are three levels, from global to per element.
 
@@ -336,7 +336,7 @@ Every visible or announced string is a `labels` prop, with English defaults:
 
 Layouts use left/right styles, which React Native mirrors automatically in RTL (`I18nManager.isRTL`), and the reasoning chevron flips direction. RTL has **not** been tested on a device yet.
 
-## 📱 Run the demo
+## Run the demo
 
 The [`example/`](./example) folder is an Expo SDK 57 app. It imports the components straight from `../components`, the same way your app would after pasting them in. It's organized with Clean Architecture, and plugging in a real model means writing one adapter: see [ARCHITECTURE.md](./ARCHITECTURE.md#using-a-real-model).
 
@@ -348,7 +348,7 @@ npx expo start
 
 Scan the QR code with **Expo Go**, or press `i` / `a` for a simulator. The demo streams simulated AI replies with a reasoning phase, Markdown and a highlighted code block, so you can try everything without an API key. Tap **"Stress-test the Markdown"** for the messy cases: a table, task lists, `~~~`, an image, raw HTML and a broken link.
 
-## ⚡ Performance
+## Performance
 
 Parser numbers from `npm run bench` (Node 24, Intel Core i5-1235U laptop). They measure **parsing only**, not rendering, and a phone's JS thread is typically several times slower:
 
@@ -362,7 +362,7 @@ Cost grows linearly with message length: there is no backtracking regex, and 100
 
 **Not measured yet:** rendering on low-end Android, 200+ message lists, tablets, and RTL. If you run into a slow case, please open an issue with the device and message.
 
-## 🧪 Tests
+## Tests
 
 ```bash
 npm install        # repo tooling only (ESLint, TypeScript); the kit itself adds no dependency
@@ -382,7 +382,7 @@ Tests use Node's built-in runner (Node ≥ 22.18), with no test framework:
 
 CI runs lint, tests, `npm audit` and the type check on every push. There are no visual regression tests yet: UI changes are checked by hand in the example app.
 
-## ✅ Compatibility
+## Compatibility
 
 | Setup | Status |
 | --- | --- |
@@ -393,7 +393,7 @@ CI runs lint, tests, `npm audit` and the type check on every push. There are no 
 
 `StreamingChatBubble` animates its height by measuring its content with `onLayout`. That relies on a Yoga detail (`overflow: "scroll"` measures children unconstrained) verified on the versions above. If it misbehaves on your setup, pass `animateGrowth={false}` to turn the animation off.
 
-## 🗺️ Roadmap
+## Roadmap
 
 Stability first:
 
@@ -411,7 +411,7 @@ Then features:
 
 See the [changelog](./CHANGELOG.md) for what changed in each version, [ARCHITECTURE.md](./ARCHITECTURE.md) for how the code is organized, and [SECURITY.md](./SECURITY.md) for the threat model and how to report a vulnerability. Have an idea? [Open an issue](https://github.com/Alfaro134/shadcn-ai-native/issues). PRs are welcome!
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome, especially new components (message actions, attachment previews, voice input…). Please:
 
@@ -420,8 +420,10 @@ Contributions are welcome, especially new components (message actions, attachmen
 3. Respect the dependency rules in [ARCHITECTURE.md](./ARCHITECTURE.md) (a test enforces them).
 4. Run `npm run check`, and try your change in the `example/` app on both iOS and Android.
 
-## 📄 License
+## License
 
 [MIT](./LICENSE) © 2026 Josué E. Alfaro
 
-Free to use in personal and commercial projects. If it saved you a weekend, a ⭐ helps a lot.
+Free to use in personal and commercial projects. If it saved you a weekend, a star helps a lot.
+
+This is an independent community project. It is not affiliated with, endorsed by, or maintained by [shadcn](https://github.com/shadcn) or the [shadcn/ui](https://ui.shadcn.com) project; the name only refers to the copy-paste approach it follows.
