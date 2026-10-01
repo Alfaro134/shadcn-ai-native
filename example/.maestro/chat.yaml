@@ -27,8 +27,10 @@ name: Chat
 - waitForAnimationToEnd
 - takeScreenshot: 04-keyboard-open
 - tapOn: "Send message"
+- takeScreenshot: 04b-after-send
+# The earlier reply's chips are still on screen, so wait for text only the new reply has.
 - extendedWaitUntil:
-    visible: ".*Regenerate"
+    visible: "Read more in.*"
     timeout: 60000
 # Maestro's hideKeyboard is unreliable on iOS; drag the list down, like a user would
 # (keyboardDismissMode="interactive").
@@ -39,6 +41,10 @@ name: Chat
 
 # The messy Markdown cases: table, task list, ~~~ fence, image, raw HTML, broken link.
 - tapOn: "New chat"
+# The suggestion row scrolls horizontally and this chip starts off-screen.
+- swipe:
+    from: "Write a debounce hook in TypeScript"
+    direction: LEFT
 - tapOn: "Stress-test the Markdown"
 - extendedWaitUntil:
     visible: ".*Regenerate"
