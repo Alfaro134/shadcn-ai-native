@@ -90,8 +90,9 @@ jobs:
           maestro --device "$UDID" test "$GITHUB_WORKSPACE/example/.maestro/dark-mode.yaml" \
             --test-output-dir "$OUT/dark" --debug-output "$OUT/dark-debug"
 
+      # Always, so a failed or cancelled run still shows where the app was.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
           name: ios-screenshots
           path: maestro-output

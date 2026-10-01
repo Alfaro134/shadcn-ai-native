@@ -1,6 +1,8 @@
 # Smoke test of the example app on a simulator: streaming, Markdown, the keyboard and the
 # action chips. Run it with `maestro test example/.maestro` against a build of the example app.
 # The screenshots are what a human reviews; the assertions only catch a broken flow.
+# Maestro needs seconds per step on CI, longer than the simulated "thinking" phase, so the flow
+# checks the collapsed reasoning block afterwards instead of racing the live one.
 appId: dev.alfaro134.shadcnainative.example
 name: Chat
 ---
@@ -11,11 +13,11 @@ name: Chat
 
 # Reasoning block, then a streamed reply with a highlighted code block.
 - tapOn: "Write a debounce hook in TypeScript"
-- assertVisible: "Thinking.*"
-- takeScreenshot: 02-thinking
+- takeScreenshot: 02-streaming
 - extendedWaitUntil:
     visible: ".*Regenerate"
     timeout: 60000
+- assertVisible: "Thought for.*"
 - takeScreenshot: 03-reply-with-code
 
 # The input must sit right above the keyboard and grow with the text.
