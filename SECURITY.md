@@ -29,11 +29,14 @@ anything. What the kit guarantees, and what stays your app's job:
 ## Dependencies
 
 The kit itself adds no runtime dependency beyond React Native, Reanimated, NativeWind and
-`expo-clipboard`. CI runs `npm audit` for the repo tooling and the example app, and Dependabot
-keeps both, plus the pinned GitHub Actions, up to date.
+`expo-clipboard`. CI runs `npm audit` for the repo tooling and the example app
+(`scripts/audit.ts`): any high or critical advisory fails the build unless it is assessed below.
+Dependabot keeps both, plus the pinned GitHub Actions, up to date.
 
 ### Known advisories
 
 | Advisory | Where | Assessment |
 | --- | --- | --- |
 | [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) (moderate), `uuid` < 11.1.1 | `example/` only: `expo` → `@expo/config-plugins` → `xcode` → `uuid@7`. Reported as 10 moderate findings along that chain. | **Not reachable.** The bug needs `uuid.v3/v5/v6` with a caller-provided buffer; `xcode` only calls `v4()`, and only during iOS prebuild on a developer machine. Nothing ships in the app. Forcing `uuid@11` could break prebuild, so we wait for Expo to update `xcode`. CI fails on high or critical advisories. |
+| [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) (high), `braces` <= 3.0.3, no fixed version yet | `example/` only: `tailwindcss` and `metro` → `micromatch` → `braces`. Dev tooling. | **Not reachable.** The bug is a stack overflow on deeply nested brace patterns. Here `braces` only expands globs written in the project's own config (Tailwind `content`, Metro), on a developer machine or CI. Nothing ships in the app. |
+| [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) (high), `node-forge` <= 1.4.0, no fixed version yet | `example/` only: `expo` → `@expo/cli` → `@expo/code-signing-certificates` → `node-forge`. Dev tooling. | **Not reachable.** The bug is in RSA signature verification, used by the CLI only for EAS Update code signing. The example has no `expo-updates` and no `codeSigningCertificate`. Nothing ships in the app. |

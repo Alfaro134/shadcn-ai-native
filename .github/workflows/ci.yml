@@ -29,7 +29,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - run: node scripts/audit.ts
       - run: npm run lint
       - run: npm test
       - run: npm run bench
@@ -49,9 +49,9 @@ jobs:
           cache-dependency-path: example/package-lock.json
       - run: npm ci
         working-directory: example
-      # Expo's build tooling carries moderate advisories that only upstream can fix (see
-      # SECURITY.md); fail on high or critical ones.
-      - run: npm audit --audit-level=high
+      # Fails on high or critical advisories, except the ones assessed in SECURITY.md that only
+      # upstream (Expo, Tailwind) can fix.
+      - run: node ../scripts/audit.ts
         working-directory: example
       # The Expo SDK pins exact versions of React, React Native, Reanimated and Worklets; in Expo
       # Go a mismatch breaks the app at runtime even when the types check out.
