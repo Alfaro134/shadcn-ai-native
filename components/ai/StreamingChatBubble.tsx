@@ -14,10 +14,10 @@ import Animated, {
 
 import { CodeBlock } from "./CodeBlock";
 import {
+  createStreamingParser,
   inlineToPlainText,
   markdownHasLinks,
   markdownToPlainText,
-  parseMarkdown,
   type Block,
   type Inline,
   type ListItem,
@@ -347,7 +347,9 @@ interface MarkdownBlockProps {
   gap: boolean;
 }
 
-function MarkdownBlock({ block, ctx, caret, gap }: MarkdownBlockProps) {
+// Memoized: the streaming parser returns finished blocks as the same objects, so a new token
+// re-renders only the block being written, not the whole message.
+const MarkdownBlock = memo(function MarkdownBlock({ block, ctx, caret, gap }: MarkdownBlockProps) {
   const caretNode = caret ? <BlinkingCaret /> : null;
   const gapClass = gap && theme.blockGap;
 
@@ -425,7 +427,7 @@ function MarkdownBlock({ block, ctx, caret, gap }: MarkdownBlockProps) {
     case "rule":
       return <View className={cx(ctx.cls("rule"), gapClass)} />;
   }
-}
+});
 
 /* -------------------------------------------------------------------------------------------------
  * Sub-components
@@ -504,7 +506,9 @@ function StreamingChatBubbleImpl({
   classNames,
   className,
 }: StreamingChatBubbleProps) {
-  const segments = useMemo(() => parseMarkdown(content, isStreaming), [content, isStreaming]);
+  // One parser per bubble: each token re-parses only the text that can still change.
+  const [parse] = useState(createStreamingParser);
+  const segments = useMemo(() => parse(content, isStreaming), [parse, content, isStreaming]);
 
   const labels = useMemo(() => ({ ...DEFAULT_LABELS, ...labelOverrides }), [labelOverrides]);
   const ctx = useMemo<RenderContext>(

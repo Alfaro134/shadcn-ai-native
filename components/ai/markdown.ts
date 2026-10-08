@@ -155,9 +155,10 @@ function splitFences(source: string, open: boolean): RawSegment[] {
   let code: string[] = [];
   let fence: (Fence & { info: string }) | null = null;
 
+  // Not trimmed: trailing blank lines tell parseBlocks that the last block is closed.
   const flushText = () => {
-    const value = trimNewlines(text.join("\n"));
-    if (value.length > 0) segments.push({ type: "text", value });
+    const value = text.join("\n");
+    if (trimNewlines(value).length > 0) segments.push({ type: "text", value });
     text = [];
   };
 
@@ -588,10 +589,12 @@ type Draft =
  */
 export function parseBlocks(source: string, open: boolean): Block[] {
   const lines = source.split("\n").map(stripCR);
-  if (open && isPendingMarker(lines[lines.length - 1])) lines.pop();
+  const droppedMarker = open && isPendingMarker(lines[lines.length - 1]);
+  if (droppedMarker) lines.pop();
 
   const drafts: Draft[] = [];
   let current: Draft | null = null;
+  let lastDraftLine = -1; // last line that went into a draft
   const push = (draft: Draft) => {
     drafts.push(draft);
     current = draft;
@@ -606,6 +609,8 @@ export function parseBlocks(source: string, open: boolean): Block[] {
       current = null;
       continue;
     }
+    const previousDraftLine = lastDraftLine;
+    lastDraftLine = n;
 
     const heading = matchHeading(line);
     if (heading) {
@@ -635,10 +640,14 @@ export function parseBlocks(source: string, open: boolean): Block[] {
         push({ type: "table", align: align && align.length === header.length ? align : header.map(() => "left"), header, rows });
         current = null;
         n = m - 1;
+        lastDraftLine = n;
         continue;
       }
       // A lone "| a | b" at the tail may be a table header whose delimiter row hasn't arrived.
-      if (open && isLastLine && line.trimStart().startsWith("|")) continue;
+      if (open && isLastLine && line.trimStart().startsWith("|")) {
+        lastDraftLine = previousDraftLine;
+        continue;
+      }
     }
 
     const trimmed = line.trimStart();
@@ -666,8 +675,17 @@ export function parseBlocks(source: string, open: boolean): Block[] {
     else push({ type: "paragraph", lines: [line] });
   }
 
+  // A finished blank line after the last block closes it: no closer can reach it any more, so it
+  // parses like finished text ("**bold\n\n" keeps its asterisks), whatever is still arriving below.
+  // The last line is still being written, unless it was a dropped marker.
+  let tailOpen = open;
+  const lastFinished = droppedMarker ? lines.length - 1 : lines.length - 2;
+  for (let k = lastDraftLine + 1; k <= lastFinished && tailOpen; k++) {
+    if (lines[k].trim().length === 0) tailOpen = false;
+  }
+
   return drafts.map((draft, index): Block => {
-    const tail = open && index === drafts.length - 1;
+    const tail = tailOpen && index === drafts.length - 1;
     switch (draft.type) {
       case "paragraph":
         return { type: "paragraph", inline: parseInline(draft.lines.join("\n"), tail) };
@@ -719,21 +737,132 @@ export function parseMarkdown(source: string, streaming = false): MarkdownSegmen
   );
 }
 
-export function blocksToPlainText(blocks: Block[]): string {
-  return blocks
-    .map((block) => {
-      switch (block.type) {
-        case "rule":
-          return "";
-        case "list":
-          return block.items.map((it) => `${it.marker} ${inlineToPlainText(it.inline)}`).join("\n");
-        case "table":
-          return [block.header, ...block.rows].map((row) => row.map(inlineToPlainText).join(" | ")).join("\n");
-        default:
-          return inlineToPlainText(block.inline);
+/**
+ * Returns a parser for one message that grows by appending, as a stream does. Each call returns
+ * exactly what `parseMarkdown(source, streaming)` would, but only re-parses the part that can
+ * still change, so streaming a reply costs linear time in total instead of quadratic.
+ *
+ * Text before a finished blank line (outside code) or a closing fence can't change any more:
+ * blocks never span a blank line, and every inline span ends with its block. Those blocks are
+ * parsed once and returned as the same objects on later calls, so a renderer can memoize them by
+ * identity. If `source` stops extending the previous one (a different message), it starts over.
+ */
+export function createStreamingParser(): (source: string, streaming?: boolean) => MarkdownSegment[] {
+  let settledSource = ""; // source.slice(0, settledSource.length) is parsed into `settled` + `run`
+  let settled: MarkdownSegment[] = [];
+  let run: Block[] | null = null; // blocks of a text segment that continues past settledSource
+  let scanned = ""; // finished lines already checked for a checkpoint
+  let fence: Fence | null = null; // fence open at the end of `scanned`
+  let last: { source: string; streaming: boolean; result: MarkdownSegment[] } | null = null;
+
+  const reset = () => {
+    settledSource = "";
+    settled = [];
+    run = null;
+    scanned = "";
+    fence = null;
+  };
+
+  const settle = (chunk: string) => {
+    for (const segment of parseMarkdown(chunk, false)) {
+      if (segment.type === "text") {
+        if (run) run.push(...segment.blocks);
+        else run = [...segment.blocks];
+      } else {
+        if (run) settled.push({ type: "text", blocks: run });
+        run = null;
+        settled.push(segment);
       }
-    })
-    .join("\n");
+    }
+  };
+
+  return (source, streaming = false) => {
+    if (last && last.source === source && last.streaming === streaming) return last.result;
+    if (!source.startsWith(scanned)) reset();
+
+    // Find the last checkpoint among the finished lines (each ends with "\n").
+    let checkpoint = -1;
+    let start = scanned.length;
+    for (let end = source.indexOf("\n", start); end !== -1; end = source.indexOf("\n", start)) {
+      const line = stripCR(source.slice(start, end));
+      start = end + 1;
+      if (fence) {
+        if (isClosingFence(line, fence)) {
+          fence = null;
+          checkpoint = start;
+        }
+      } else {
+        fence = matchFence(line);
+        if (!fence && line.trim().length === 0) checkpoint = start;
+      }
+    }
+    scanned = source.slice(0, start);
+    if (checkpoint !== -1) {
+      settle(source.slice(settledSource.length, checkpoint));
+      settledSource = source.slice(0, checkpoint);
+    }
+
+    const tail = parseMarkdown(source.slice(settledSource.length), streaming);
+    const result = [...settled];
+    if (run) {
+      const head = tail[0]?.type === "text" ? tail.shift() : undefined;
+      result.push({ type: "text", blocks: head?.type === "text" ? [...run, ...head.blocks] : [...run] });
+    }
+    result.push(...tail);
+    last = { source, streaming, result };
+    return result;
+  };
+}
+
+// Blocks are immutable, and the streaming parser hands back the same objects for text that can't
+// change, so per-block results are cached: per-token work stays proportional to the new text.
+const plainTextCache = new WeakMap<Block, string>();
+const hasLinkCache = new WeakMap<Block, boolean>();
+
+function blockToPlainText(block: Block): string {
+  let text = plainTextCache.get(block);
+  if (text === undefined) {
+    switch (block.type) {
+      case "rule":
+        text = "";
+        break;
+      case "list":
+        text = block.items.map((it) => `${it.marker} ${inlineToPlainText(it.inline)}`).join("\n");
+        break;
+      case "table":
+        text = [block.header, ...block.rows].map((row) => row.map(inlineToPlainText).join(" | ")).join("\n");
+        break;
+      default:
+        text = inlineToPlainText(block.inline);
+    }
+    plainTextCache.set(block, text);
+  }
+  return text;
+}
+
+function blockHasLink(block: Block): boolean {
+  let found = hasLinkCache.get(block);
+  if (found === undefined) {
+    switch (block.type) {
+      case "rule":
+        found = false;
+        break;
+      case "list":
+        found = block.items.some((it) => inlineHasLink(it.inline));
+        break;
+      case "table":
+        found = [block.header, ...block.rows].some((row) => row.some(inlineHasLink));
+        break;
+      default:
+        found = inlineHasLink(block.inline);
+    }
+    hasLinkCache.set(block, found);
+  }
+  return found;
+}
+
+export function blocksToPlainText(blocks: Block[]): string {
+  return blocks.map(blockToPlainText).join("\n");
 }
 
 /** Plain text for screen readers and copy actions. Code blocks are included verbatim. */
@@ -743,20 +872,5 @@ export function markdownToPlainText(segments: MarkdownSegment[]): string {
 
 /** True if any segment contains a pressable link or image. */
 export function markdownHasLinks(segments: MarkdownSegment[]): boolean {
-  return segments.some(
-    (segment) =>
-      segment.type === "text" &&
-      segment.blocks.some((block) => {
-        switch (block.type) {
-          case "rule":
-            return false;
-          case "list":
-            return block.items.some((it) => inlineHasLink(it.inline));
-          case "table":
-            return [block.header, ...block.rows].some((row) => row.some(inlineHasLink));
-          default:
-            return inlineHasLink(block.inline);
-        }
-      }),
-  );
+  return segments.some((segment) => segment.type === "text" && segment.blocks.some(blockHasLink));
 }

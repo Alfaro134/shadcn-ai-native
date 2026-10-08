@@ -3,6 +3,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createStreamingParser,
   isSafeUrl,
   parseInline,
   parseBlocks,
@@ -194,6 +195,10 @@ describe("blocks, streaming tail", () => {
     ["table while delimiter streams", "| a | b |\n|--", "table{left,left}[a|b]"],
     ["table row streaming", "| a | b |\n|---|---|\n| 1 | **tw", "table{left,left}[a|b / 1|tw]"],
     ["complete text keeps markers", "para\n##", "paragraph(para\n##)"],
+    ["a blank line closes the block", "**bold\n\n", "paragraph(**bold)"],
+    ["a blank line before a pending marker closes the block", "**bold\n\n-", "paragraph(**bold)"],
+    ["a single newline keeps the block open", "**bold\n", "paragraph(bold)"],
+    ["blank lines close a block even while a table header arrives", "~~a\n\n| b", "paragraph(~~a)"],
   ];
   for (const [name, input, expected] of cases) {
     const complete = name === "complete text keeps markers";
@@ -298,6 +303,58 @@ describe("property: every streaming prefix parses cleanly", () => {
       "rule",
       "paragraph(See IMG(diagram|https://example.com/d.png) or visit L(https://example.com/docs|https://example.com/docs).)",
     ]);
+  });
+});
+
+/* -------------------------------------------------------------------------------------------------
+ * Streaming parser: same result as a full parse, with finished blocks reused.
+ * -----------------------------------------------------------------------------------------------*/
+
+describe("createStreamingParser", () => {
+  for (const [name, text] of Object.entries(CORPUS)) {
+    test(`${name}: every prefix matches a full parse`, () => {
+      const parse = createStreamingParser();
+      for (let end = 1; end <= text.length; end++) {
+        const prefix = text.slice(0, end);
+        assert.deepEqual(parse(prefix, true), parseMarkdown(prefix, true), `prefix ${end} of "${name}"`);
+      }
+      assert.deepEqual(parse(text, false), parseMarkdown(text, false));
+    });
+  }
+
+  test("random documents in random chunks match a full parse", () => {
+    let seed = 7;
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const alphabet = ["*", "_", "~", "`", "[", "]", "(", ")", "<", "#", "-", "|", ":", "\n", "\n\n", "\r\n", " ", "1.", "a", "https://x.io", "```", "```js", "~~~", "- [ ] ", "> "];
+    const parse = createStreamingParser(); // shared across documents: each new one must reset it
+    for (let doc = 0; doc < 1500; doc++) {
+      let text = "";
+      const length = Math.floor(random() * 80);
+      for (let k = 0; k < length; k++) text += alphabet[Math.floor(random() * alphabet.length)];
+      let end = 0;
+      while (end < text.length) {
+        end = Math.min(text.length, end + 1 + Math.floor(random() * 6));
+        const prefix = text.slice(0, end);
+        assert.deepEqual(parse(prefix, true), parseMarkdown(prefix, true), JSON.stringify(prefix));
+      }
+      assert.deepEqual(parse(text, false), parseMarkdown(text, false), JSON.stringify(text));
+    }
+  });
+
+  test("finished blocks are the same objects on later calls", () => {
+    const parse = createStreamingParser();
+    const first = parse("## Title\n\nSome **bold** text.\n\n- one", true);
+    const second = parse("## Title\n\nSome **bold** text.\n\n- one\n- two", true);
+    const blocks = (segments: MarkdownSegment[]) => segments.flatMap((s) => (s.type === "text" ? s.blocks : []));
+    assert.equal(blocks(second)[0], blocks(first)[0]);
+    assert.equal(blocks(second)[1], blocks(first)[1]);
+    assert.notEqual(blocks(second)[2], blocks(first)[2]); // the list is still being written
+  });
+
+  test("a different message starts over", () => {
+    const parse = createStreamingParser();
+    parse("```js\nlet a = 1\n", true);
+    assert.equal(showSegments(parse("plain **text**\n\nmore", true)), "paragraph(plain B(text)) | paragraph(more)");
   });
 });
 
