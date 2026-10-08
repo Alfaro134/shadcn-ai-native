@@ -41,10 +41,19 @@ name: Chat
 
 # The messy Markdown cases: table, task list, ~~~ fence, image, raw HTML, broken link.
 - tapOn: "New chat"
-# The suggestion row scrolls horizontally and this chip starts off-screen.
-- swipe:
-    from: "Write a debounce hook in TypeScript"
-    direction: LEFT
+- waitForAnimationToEnd
+# The suggestion row scrolls horizontally and this chip starts off-screen. A swipe "from" an
+# element moves only a few points, so drag across the whole row (it sits at ~86% of the screen
+# height, right above the input) until the chip shows up.
+- repeat:
+    while:
+      notVisible: "Stress-test the Markdown"
+    times: 3
+    commands:
+      - swipe:
+          start: 85%, 86%
+          end: 15%, 86%
+          duration: 600
 - tapOn: "Stress-test the Markdown"
 - extendedWaitUntil:
     visible: ".*Regenerate"
