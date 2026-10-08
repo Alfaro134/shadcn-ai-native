@@ -6,6 +6,7 @@
 
 Streaming bubbles · Markdown · Reasoning block · Code blocks · Auto-growing prompt input · Action chips
 
+[![CI](https://github.com/Alfaro134/shadcn-ai-native/actions/workflows/ci.yml/badge.svg)](https://github.com/Alfaro134/shadcn-ai-native/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Expo](https://img.shields.io/badge/Expo-SDK%2057-000020?logo=expo&logoColor=white)
 ![iOS & Android](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey)
@@ -35,6 +36,7 @@ You end up rebuilding the same four components in every project, and they rarely
 ## Features
 
 - **Smooth streaming.** Bubbles ease into their new height on every chunk instead of snapping. There's a blinking caret while tokens arrive and a typing indicator before the first one.
+- **Linear-time streaming.** Each token re-parses and re-renders only the part of the reply that can still change: finished paragraphs and finished lines of code are parsed once and never re-rendered. A 50,000-character reply costs about 25 times less CPU than re-parsing on every token ([numbers](#performance)).
 - **Streaming-safe Markdown, zero dependencies.** A [documented subset of GitHub Flavored Markdown](#markdown-support): headings, lists, task lists, tables, blockquotes, links, images, bold/italic/strikethrough, code. While a reply streams, half-written markup isn't shown raw: `**bold te` renders as `bold te` and `[Google](http…` as `Google` until the closing marker arrives. [Tested](#tests) against every prefix of real-looking replies, fuzzed, and [benchmarked](#performance).
 - **Reasoning block.** A collapsible "Thinking…" / "Thought for 4 seconds" accordion for reasoning models, animated with Reanimated.
 - **Best-effort syntax highlighting.** A small regex highlighter tuned for JS/TS/JSON, Python and shell, with a generic fallback for other languages. **No highlighting library.** Very large blocks show a "plain text" badge instead of silently losing their colors.
@@ -52,8 +54,8 @@ You end up rebuilding the same four components in every project, and they rarely
 | File | What it does |
 | --- | --- |
 | [`StreamingChatBubble`](./components/ai/StreamingChatBubble.tsx) | User/assistant message bubble with smooth streaming growth and Markdown. Code fences render as `<CodeBlock />`. `header` and `footer` slots. |
-| [`markdown.ts`](./components/ai/markdown.ts) | The streaming-safe Markdown parser behind the bubble. Pure TypeScript, no React, usable on its own. |
-| [`highlight.ts`](./components/ai/highlight.ts) | The best-effort syntax highlighter behind `CodeBlock`. Pure TypeScript, no React. |
+| [`markdown.ts`](./components/ai/markdown.ts) | The streaming-safe Markdown parser behind the bubble, with an incremental mode for streams (`createStreamingParser`). Pure TypeScript, no React, usable on its own. |
+| [`highlight.ts`](./components/ai/highlight.ts) | The best-effort syntax highlighter behind `CodeBlock`, with the same incremental mode (`createStreamingHighlighter`). Pure TypeScript, no React. |
 | [`ReasoningBlock`](./components/ai/ReasoningBlock.tsx) | Collapsible "Thinking…" accordion for a model's reasoning. Times itself while streaming, then collapses to "Thought for N seconds". Pass it as the bubble's `header`. |
 | [`CodeBlock`](./components/ai/CodeBlock.tsx) | Dark code block with language header, best-effort highlighting, horizontal scroll, optional line numbers and copy-to-clipboard. |
 | [`DynamicPromptInput`](./components/ai/DynamicPromptInput.tsx) | Chat input with auto-grow, keyboard avoidance, attach button and a Send ⇄ Stop button. |
@@ -286,7 +288,7 @@ Remember to wrap your app in keyboard-controller's `<KeyboardProvider>`.
 
 **Not supported** (shown as plain text): raw HTML, footnotes, reference-style links (`[text][id]`), setext headings (`===` underlines), hard breaks via trailing spaces, nested blockquotes, and block content (code, lists) inside quotes or list items.
 
-**While streaming**, only the tail of the message is treated as unfinished. An opener without its closer hides its marker until the closer arrives, and a last line that is only a block marker so far (`##`, `-`, `1.`, `|`) waits for its text. Once the message is complete, unclosed markers render literally, so `5 * 3` keeps its asterisk.
+**While streaming**, only the last block of the message is treated as unfinished. An opener without its closer hides its marker until the closer arrives, and a last line that is only a block marker so far (`##`, `-`, `1.`, `|`) waits for its text. A block followed by a blank line is finished, since no closer can reach it any more. Once the message is complete, unclosed markers render literally, so `5 * 3` keeps its asterisk.
 
 ## Customization
 
@@ -348,17 +350,30 @@ npx expo start
 
 Scan the QR code with **Expo Go**, or press `i` / `a` for a simulator. The demo streams simulated AI replies with a reasoning phase, Markdown and a highlighted code block, so you can try everything without an API key. Tap **"Stress-test the Markdown"** for the messy cases: a table, task lists, `~~~`, an image, raw HTML and a broken link.
 
+### Telemetry
+
+The example app reports one metrics record per reply through a `ChatTelemetry` port: trigger (send or regenerate), outcome (complete, stopped, error, or discarded when the chat is cleared mid-reply), time to first token, duration, chunk count and size. In development they're printed to the Metro console:
+
+```
+[chat] send → complete · first token 682 ms · 3104 ms · 214 chunks · 1830 chars
+```
+
+The records contain **no prompt or reply text**, so you can forward them to your analytics as they are. To send them to Sentry, PostHog or Datadog, write an adapter in `example/src/infrastructure` and pass it in `App.tsx`. The model's error comes as a separate argument: scrub it before sending it anywhere. A failing telemetry adapter never breaks the chat. The kit itself collects nothing and makes no network requests.
+
 ## Performance
 
-Parser numbers from `npm run bench` (Node 24, Intel Core i5-1235U laptop). They measure **parsing only**, not rendering, and a phone's JS thread is typically several times slower:
+Numbers from `npm run bench` (Node 24, Intel Core i5-1235U laptop). They measure **parsing and highlighting only**, not rendering, and a phone's JS thread is typically several times slower. "Full re-parse" is what the bubble did before 1.2:
 
-| Case | Time |
-| --- | --- |
-| Parse a finished 10,000-char message | 0.36 ms |
-| Parse a finished 50,000-char message | 2.05 ms |
-| Stream a 20,000-char message (6,448 chunks) | 0.47 ms per chunk at the end |
+| Case | Full re-parse on every chunk | Streaming parser (current) |
+| --- | --- | --- |
+| Stream a 5,000-char reply (1,597 chunks) | 152 ms total | 16 ms total |
+| Stream a 20,000-char reply (6,448 chunks) | 1,687 ms total | 87 ms total |
+| Stream a 50,000-char reply (16,082 chunks) | 10,030 ms total | 377 ms total |
+| Stream a 10,000-char code block (3,367 chunks) | 560 ms total | 23 ms total |
 
-Cost grows linearly with message length: there is no backtracking regex, and 100,000-character adversarial inputs parse in milliseconds ([tests](./tests/markdown.test.ts)). The bubble re-parses the whole message on every chunk, so very long replies cost more per chunk as they grow.
+A finished 10,000-char message parses in 0.4 ms, and a 50,000-char one in 2 ms.
+
+Each pass is linear in the text it reads: there is no backtracking regex, and 100,000-character adversarial inputs parse in milliseconds ([tests](./tests/markdown.test.ts)). While a reply streams, everything before the last blank line (or the last finished line of a code block) is parsed once, and those blocks keep their identity, so the bubble's memoized blocks and code lines don't re-render. A property test checks that the streaming parser returns exactly what a full parse would, for every prefix of realistic replies and of 1,500 random documents.
 
 **Not measured yet:** rendering on low-end Android, 200+ message lists, tablets, and RTL. If you run into a slow case, please open an issue with the device and message.
 
@@ -368,26 +383,26 @@ Cost grows linearly with message length: there is no backtracking regex, and 100
 npm install        # repo tooling only (ESLint, TypeScript); the kit itself adds no dependency
 npm run check      # everything below
 npm run lint       # ESLint, including the React Hooks and React Compiler rules
-npm test           # 176 tests: see below
+npm test           # 196 tests: see below
 npm run typecheck  # needs `npm install` in example/ first
-npm run bench      # parser benchmarks
+npm run bench      # parser and highlighter benchmarks
 ```
 
 Tests use Node's built-in runner (Node ≥ 22.18), with no test framework:
 
-- **Markdown parser:** unit tests, a property test over every streaming prefix of realistic replies, 5,000 fuzzed documents, link-safety cases and linear-time checks on adversarial input.
-- **Syntax highlighter:** grammar tests, a round-trip check, and linear-time checks.
-- **Example app use cases:** `ChatSession` (send, stop, regenerate, errors, stale events) against a fake model.
+- **Markdown parser:** unit tests, a property test over every streaming prefix of realistic replies, 5,000 fuzzed documents, link-safety cases and linear-time checks on adversarial input. The streaming parser must match a full parse on every prefix.
+- **Syntax highlighter:** grammar tests, a round-trip check, linear-time checks, and the same equivalence check for the streaming highlighter.
+- **Example app use cases:** `ChatSession` (send, stop, regenerate, errors, stale events, a model that throws, telemetry) against a fake model.
 - **Architecture:** the dependency rules in [ARCHITECTURE.md](./ARCHITECTURE.md), checked on every import.
 
-CI runs lint, tests, `npm audit` and the type check on every push. There are no visual regression tests yet: UI changes are checked by hand in the example app.
+Every pull request must pass lint, tests, benchmarks, the type check, `npm audit` and a dependency review before it can merge into `main`; CodeQL scans the code too. An iOS workflow builds the example for the simulator and drives it with Maestro. There are no visual regression tests yet: UI changes are checked by hand in the example app.
 
 ## Compatibility
 
 | Setup | Status |
 | --- | --- |
 | Expo SDK 57 · React Native 0.86.3 (New Architecture) · Reanimated 4.5.1 · NativeWind 4.2 | ✅ Tested on an Android 9 emulator |
-| iOS | ⚠️ Expected to work, **not tested yet** |
+| iOS | ⚠️ Builds and runs in the simulator in CI; the automated flow is still being stabilized, **not tested on a device yet** |
 | Older React Native versions / Old Architecture | ❓ Untested |
 | Expo Go | ✅ No native modules beyond the Expo Go set |
 
@@ -413,7 +428,7 @@ See the [changelog](./CHANGELOG.md) for what changed in each version, [ARCHITECT
 
 ## Contributing
 
-Contributions are welcome, especially new components (message actions, attachment previews, voice input…). Please:
+Contributions are welcome, especially new components (message actions, attachment previews, voice input…). Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the workflow; in short:
 
 1. Keep components **copy-paste friendly**: no new runtime dependencies, and pure logic in its own file (like `markdown.ts`) so it can be tested.
 2. Put all styling in the file's `theme` object with `dark:` variants, and every string in `labels`.

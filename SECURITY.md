@@ -25,6 +25,7 @@ anything. What the kit guarantees, and what stays your app's job:
 | **Raw HTML** | Never interpreted: it renders as literal text. React Native has no HTML sink. | Don't render model output in a WebView without sanitizing it. |
 | **Clipboard** | Copy buttons write only the code or message the user tapped. | — |
 | **Secrets** | The kit makes no network requests and stores nothing. | Keep API keys on your server, never in the app bundle. |
+| **Telemetry and privacy** | The kit collects nothing. The example app's `ChatTelemetry` records hold metrics only, never prompt or reply text. | The model's `error` is passed to telemetry as-is: scrub it before sending it to a third party. |
 
 ## Dependencies
 

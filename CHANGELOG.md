@@ -8,7 +8,34 @@ re-copying a file.
 
 ## [1.2.0] - Unreleased
 
+### Changed
+
+- **Streaming is linear-time.** `StreamingChatBubble` uses `createStreamingParser` and memoizes
+  its Markdown blocks, so each token re-parses and re-renders only the unfinished tail. Streaming
+  a 50,000-char reply costs about 25 times less CPU (see the README's Performance section).
+  `CodeBlock` does the same with `createStreamingHighlighter`: about 24 times less for a
+  10,000-char block.
+- Markdown: a block followed by a blank line counts as finished while streaming, so its unclosed
+  markers render literally instead of being hidden. This fixes `~~a
+
+| b` showing `a` while a
+  table header arrived.
+
+### Fixed
+
+- Example app: a model adapter that throws synchronously no longer leaves the chat stuck in
+  "generating"; the reply ends as an error.
+- Example app: the model's error is no longer discarded; it reaches telemetry.
+
 ### Added
+
+- `markdown.ts` exports `createStreamingParser`; `highlight.ts` exports
+  `createStreamingHighlighter`. Both return exactly what a full parse would, and reuse the
+  objects for text that can't change.
+- Example app: a `ChatTelemetry` port with reply metrics (time to first token, duration, chunks,
+  outcome) and a development adapter that logs to the Metro console.
+- Repository: `CONTRIBUTING.md`, code owners, pull request and issue templates, a dependency
+  review on pull requests.
 
 - `markdown.ts`: the Markdown parser now lives in its own pure-TypeScript file, usable and
   testable without React Native. `StreamingChatBubble` imports it, so copy both files.
