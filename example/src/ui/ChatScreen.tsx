@@ -8,6 +8,7 @@ import { DynamicPromptInput } from "../../../components/ai/DynamicPromptInput";
 import { useChat } from "../application/use-chat";
 import type { ChatModel } from "../domain/chat-model";
 import type { Message } from "../domain/message";
+import type { ChatTelemetry } from "../domain/telemetry";
 import { ChatHeader } from "./ChatHeader";
 import { EmptyState } from "./EmptyState";
 import { MessageRow, type RowActions } from "./MessageRow";
@@ -31,9 +32,9 @@ function showAttachHint() {
   Alert.alert("Attachments", "Hook up your file or image picker in the onAttach prop.");
 }
 
-export function ChatScreen({ model }: { model: ChatModel }) {
+export function ChatScreen({ model, telemetry }: { model: ChatModel; telemetry?: ChatTelemetry }) {
   const insets = useSafeAreaInsets();
-  const { session, state } = useChat(model);
+  const { session, state } = useChat(model, telemetry);
   const { messages, streamingId } = state;
   const { copiedId, copy } = useCopyFeedback();
 

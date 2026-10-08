@@ -12,6 +12,7 @@
  */
 import type { CancelStream, ChatModel } from "../domain/chat-model";
 import type { Message, MessageStatus } from "../domain/message";
+import type { ChatTelemetry, ReplyOutcome, ReplyTrigger } from "../domain/telemetry";
 
 export interface ChatState {
   readonly messages: readonly Message[];
@@ -33,8 +34,10 @@ type Listener = () => void;
 export interface ChatSessionOptions {
   /** Id generator. Defaults to a time-based counter. */
   createId?: () => string;
-  /** Clock in ms, for the "Thought for N seconds" timing. */
+  /** Clock in ms, for the "Thought for N seconds" timing and the reply metrics. */
   now?: () => number;
+  /** Receives metrics for every reply (time to first token, outcome, …). */
+  telemetry?: ChatTelemetry;
 }
 
 const IDLE_REPLY: LiveReply = { phase: "waiting", reasoning: "", content: "" };
@@ -69,9 +72,13 @@ class Store<T> {
 
 interface ActiveStream {
   readonly messageId: string;
+  readonly trigger: ReplyTrigger;
   readonly cancel: CancelStream;
   readonly startedAt: number;
   thoughtSeconds?: number;
+  firstTokenAt?: number;
+  chunks: number;
+  error?: unknown;
 }
 
 export class ChatSession {
@@ -81,12 +88,14 @@ export class ChatSession {
   private readonly model: ChatModel;
   private readonly createId: () => string;
   private readonly now: () => number;
+  private readonly telemetry: ChatTelemetry | undefined;
   private active: ActiveStream | null = null;
 
   constructor(model: ChatModel, options: ChatSessionOptions = {}) {
     this.model = model;
     this.createId = options.createId ?? defaultCreateId;
     this.now = options.now ?? Date.now;
+    this.telemetry = options.telemetry;
   }
 
   get isStreaming(): boolean {
@@ -99,7 +108,7 @@ export class ChatSession {
     if (text.length === 0 || this.active) return false;
     const history = this.state.get().messages;
     const user: Message = { id: this.createId(), role: "user", content: text, status: "complete" };
-    this.startReply(text, [...history, user]);
+    this.startReply("send", text, [...history, user]);
     return true;
   }
 
@@ -115,7 +124,7 @@ export class ChatSession {
       }
     }
     if (lastUser === -1) return false;
-    this.startReply(messages[lastUser].content, messages.slice(0, lastUser + 1));
+    this.startReply("regenerate", messages[lastUser].content, messages.slice(0, lastUser + 1));
     return true;
   }
 
@@ -126,21 +135,25 @@ export class ChatSession {
 
   /** Cancels any stream and clears the conversation. */
   reset(): void {
-    const active = this.active;
-    this.active = null;
-    active?.cancel();
+    this.discard();
     this.live.set(IDLE_REPLY);
     this.state.set({ messages: [], streamingId: null });
   }
 
   /** Call when the owner unmounts: cancels the stream so no timer or request outlives it. */
   dispose(): void {
-    const active = this.active;
-    this.active = null;
-    active?.cancel();
+    this.discard();
   }
 
-  private startReply(prompt: string, messages: readonly Message[]): void {
+  private discard(): void {
+    const active = this.active;
+    if (!active) return;
+    this.active = null;
+    active.cancel();
+    this.report(active, "discarded");
+  }
+
+  private startReply(trigger: ReplyTrigger, prompt: string, messages: readonly Message[]): void {
     const messageId = this.createId();
     const placeholder: Message = { id: messageId, role: "assistant", content: "", status: "complete" };
     this.live.set(IDLE_REPLY);
@@ -152,33 +165,50 @@ export class ChatSession {
     const isCurrent = () => this.active?.messageId === messageId;
     const startedAt = this.now();
     let cancel: CancelStream = () => {};
-    this.active = { messageId, startedAt, cancel: () => cancel() };
+    const active: ActiveStream = { messageId, trigger, startedAt, cancel: () => cancel(), chunks: 0 };
+    this.active = active;
+    const received = (delta: string) => {
+      if (delta.length === 0) return; // an empty reasoning delta only announces the phase
+      active.chunks++;
+      active.firstTokenAt ??= this.now();
+    };
 
-    cancel = this.model.stream(
-      { prompt, history: messages },
-      {
-        onReasoning: (delta) => {
-          if (!isCurrent()) return;
-          const reply = this.live.get();
-          this.live.set({ phase: "reasoning", reasoning: reply.reasoning + delta, content: reply.content });
+    try {
+      cancel = this.model.stream(
+        { prompt, history: messages },
+        {
+          onReasoning: (delta) => {
+            if (!isCurrent()) return;
+            received(delta);
+            const reply = this.live.get();
+            this.live.set({ phase: "reasoning", reasoning: reply.reasoning + delta, content: reply.content });
+          },
+          onAnswer: (delta) => {
+            if (!isCurrent()) return;
+            received(delta);
+            const reply = this.live.get();
+            if (reply.phase === "reasoning" && active.thoughtSeconds === undefined) {
+              active.thoughtSeconds = this.secondsSince(active.startedAt);
+            }
+            this.live.set({ phase: "answer", reasoning: reply.reasoning, content: reply.content + delta });
+          },
+          onDone: () => {
+            if (isCurrent()) this.finish("complete");
+          },
+          onError: (error) => {
+            if (!isCurrent()) return;
+            active.error = error;
+            this.finish("error");
+          },
         },
-        onAnswer: (delta) => {
-          const active = this.active;
-          if (!active || !isCurrent()) return;
-          const reply = this.live.get();
-          if (reply.phase === "reasoning" && active.thoughtSeconds === undefined) {
-            active.thoughtSeconds = this.secondsSince(active.startedAt);
-          }
-          this.live.set({ phase: "answer", reasoning: reply.reasoning, content: reply.content + delta });
-        },
-        onDone: () => {
-          if (isCurrent()) this.finish("complete");
-        },
-        onError: () => {
-          if (isCurrent()) this.finish("error");
-        },
-      },
-    );
+      );
+    } catch (error) {
+      // A model adapter that throws instead of calling onError must not leave the chat stuck
+      // in "generating" with no way to send again.
+      if (!isCurrent()) return;
+      active.error = error;
+      this.finish("error");
+    }
   }
 
   /** Commits the streamed reply into the message list, once. */
@@ -212,6 +242,27 @@ export class ChatSession {
 
     this.state.set({ messages: next, streamingId: null });
     this.live.set(IDLE_REPLY);
+    this.report(active, status, reply);
+  }
+
+  private report(active: ActiveStream, outcome: ReplyOutcome, reply: LiveReply = this.live.get()): void {
+    if (!this.telemetry) return;
+    try {
+      this.telemetry.replyEnded(
+        {
+          trigger: active.trigger,
+          outcome,
+          timeToFirstTokenMs: active.firstTokenAt === undefined ? undefined : active.firstTokenAt - active.startedAt,
+          durationMs: this.now() - active.startedAt,
+          chunks: active.chunks,
+          reasoningChars: reply.reasoning.length,
+          answerChars: reply.content.length,
+        },
+        outcome === "error" ? active.error : undefined,
+      );
+    } catch {
+      // Telemetry is best-effort: a failing analytics adapter must never break the chat.
+    }
   }
 
   private secondsSince(start: number): number {

@@ -97,10 +97,10 @@ describe("example app: clean architecture layers", () => {
       return !target.startsWith("example/") || target.startsWith("example/src/ui/") || target.startsWith("example/src/application/");
     }));
 
-  test("only App.tsx (the composition root) picks the model implementation", () => {
+  test("only App.tsx (the composition root) picks adapters", () => {
     const users = filesIn("example")
-      .filter((f) => !f.includes("node_modules") && f !== "example/App.tsx")
-      .filter((f) => importsOf(f).some((imp) => resolve(f, imp.specifier) === "example/src/infrastructure/simulated-chat-model"));
+      .filter((f) => !f.includes("node_modules") && f !== "example/App.tsx" && !f.startsWith("example/src/infrastructure/"))
+      .filter((f) => importsOf(f).some((imp) => resolve(f, imp.specifier).startsWith("example/src/infrastructure/")));
     assert.deepEqual(users, []);
   });
 });

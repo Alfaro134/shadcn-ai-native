@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { ChatSession } from "../example/src/application/chat-session.ts";
 import type { ChatModel, ChatRequest, ChatStreamHandlers } from "../example/src/domain/chat-model.ts";
+import type { ReplyMetrics } from "../example/src/domain/telemetry.ts";
 
 /** A ChatModel the test drives by hand: it records each stream and lets the test emit events. */
 class FakeModel implements ChatModel {
@@ -186,5 +187,101 @@ describe("dispose", () => {
     assert.equal(model.last.cancelled, true);
     model.last.handlers.onAnswer("late");
     assert.equal(session.live.get().content, "");
+  });
+});
+
+describe("telemetry", () => {
+  let reports: Array<{ metrics: ReplyMetrics; error?: unknown }>;
+
+  beforeEach(() => {
+    reports = [];
+    let id = 0;
+    session = new ChatSession(model, {
+      createId: () => `id${id++}`,
+      now: () => clock,
+      telemetry: { replyEnded: (metrics, error) => reports.push({ metrics, error }) },
+    });
+  });
+
+  test("reports time to first token, duration, chunks and size once per reply", () => {
+    session.send("hi");
+    model.last.handlers.onReasoning(""); // announces the phase: not a token
+    clock = 400;
+    model.last.handlers.onReasoning("Let me think");
+    clock = 900;
+    model.last.handlers.onAnswer("Hel");
+    model.last.handlers.onAnswer("lo");
+    clock = 1000;
+    model.last.handlers.onDone();
+    assert.deepEqual(reports, [
+      {
+        metrics: {
+          trigger: "send",
+          outcome: "complete",
+          timeToFirstTokenMs: 400,
+          durationMs: 1000,
+          chunks: 3,
+          reasoningChars: 12,
+          answerChars: 5,
+        },
+        error: undefined,
+      },
+    ]);
+  });
+
+  test("passes the model's error along with the metrics", () => {
+    session.send("hi");
+    const failure = new Error("503");
+    model.last.handlers.onError(failure);
+    assert.equal(reports[0].metrics.outcome, "error");
+    assert.equal(reports[0].metrics.timeToFirstTokenMs, undefined);
+    assert.equal(reports[0].error, failure);
+  });
+
+  test("stop, regenerate, reset and unmount are told apart", () => {
+    session.send("hi");
+    model.last.handlers.onAnswer("a");
+    session.stop();
+    session.regenerate();
+    session.reset();
+    session.send("again");
+    session.dispose();
+    assert.deepEqual(
+      reports.map((r) => `${r.metrics.trigger}:${r.metrics.outcome}`),
+      ["send:stopped", "regenerate:discarded", "send:discarded"],
+    );
+  });
+
+  test("a throwing telemetry adapter doesn't break the chat", () => {
+    let id = 0;
+    session = new ChatSession(model, {
+      createId: () => `id${id++}`,
+      telemetry: {
+        replyEnded: () => {
+          throw new Error("analytics down");
+        },
+      },
+    });
+    session.send("hi");
+    model.last.handlers.onAnswer("ok");
+    assert.doesNotThrow(() => model.last.handlers.onDone());
+    assert.deepEqual(messages(), ["user:hi", "assistant:ok"]);
+  });
+});
+
+describe("a model that throws synchronously", () => {
+  test("ends the reply as an error instead of leaving the chat stuck", () => {
+    const reports: ReplyMetrics[] = [];
+    const broken: ChatModel = {
+      stream() {
+        throw new Error("misconfigured adapter");
+      },
+    };
+    session = new ChatSession(broken, { telemetry: { replyEnded: (metrics) => reports.push(metrics) } });
+    assert.equal(session.send("hi"), true);
+    assert.equal(session.isStreaming, false);
+    assert.deepEqual(messages(), ["user:hi", "assistant:(error)"]);
+    assert.equal(reports[0].outcome, "error");
+    assert.equal(session.send("retry"), true); // not stuck
   });
 });
