@@ -59,3 +59,19 @@ jobs:
         working-directory: example
       - run: npx tsc --noEmit
         working-directory: example
+
+  # Blocks pull requests that add a dependency with a known high or critical vulnerability, or
+  # with a license that doesn't fit an MIT project.
+  dependency-review:
+    name: Review dependencies
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          deny-licenses: GPL-2.0-only, GPL-3.0-only, AGPL-3.0-only, AGPL-3.0-or-later

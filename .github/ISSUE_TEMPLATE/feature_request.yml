@@ -1,0 +1,18 @@
+name: Feature request
+description: A new component, prop or behavior.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to build, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: The API or behavior you have in mind. Remember the kit stays copy-paste and adds no runtime dependencies.
+    validations:
+      required: true

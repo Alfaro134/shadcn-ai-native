@@ -3,7 +3,7 @@ import { AccessibilityInfo, Platform, Pressable, ScrollView, Text, View } from "
 import Animated, { ZoomIn, ZoomOut } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 
-import { highlight as highlightCode, trimTrailingNewlines, type TokenKind } from "./highlight";
+import { createStreamingHighlighter, trimTrailingNewlines, type Token, type TokenKind } from "./highlight";
 
 /* -------------------------------------------------------------------------------------------------
  * Theme — edit these class strings to restyle the component.
@@ -145,6 +145,26 @@ function CheckIcon() {
   );
 }
 
+/**
+ * One chunk of highlighted tokens. Memoized: finished chunks keep their identity while a block
+ * streams, so a new token re-renders only the line being written.
+ */
+const TokenRun = memo(function TokenRun({ tokens }: { tokens: Token[] }) {
+  return (
+    <>
+      {tokens.map((token, i) =>
+        token.kind === "plain" ? (
+          token.value
+        ) : (
+          <Text key={i} className={SYNTAX[token.kind]}>
+            {token.value}
+          </Text>
+        ),
+      )}
+    </>
+  );
+});
+
 /* -------------------------------------------------------------------------------------------------
  * CodeBlock
  * -----------------------------------------------------------------------------------------------*/
@@ -172,9 +192,11 @@ function CodeBlockImpl({
     return Array.from({ length: count }, (_, i) => String(i + 1)).join("\n");
   }, [displayCode, showLineNumbers]);
   const tooLarge = highlight && displayCode.length > maxHighlightChars;
-  const tokens = useMemo(
-    () => (highlight && !tooLarge ? highlightCode(displayCode, language) : null),
-    [displayCode, language, highlight, tooLarge],
+  // One highlighter per block: while it streams, only the line being written is re-tokenized.
+  const [highlightStream] = useState(createStreamingHighlighter);
+  const chunks = useMemo(
+    () => (highlight && !tooLarge ? highlightStream(displayCode, language) : null),
+    [highlightStream, displayCode, language, highlight, tooLarge],
   );
 
   useEffect(() => {
@@ -234,17 +256,7 @@ function CodeBlockImpl({
             </Text>
           ) : null}
           <Text className={theme.code} style={{ fontFamily: MONO_FONT }} selectable>
-            {tokens
-              ? tokens.map((token, i) =>
-                  token.kind === "plain" ? (
-                    token.value
-                  ) : (
-                    <Text key={i} className={SYNTAX[token.kind]}>
-                      {token.value}
-                    </Text>
-                  ),
-                )
-              : displayCode}
+            {chunks ? chunks.map((tokens, i) => <TokenRun key={i} tokens={tokens} />) : displayCode}
           </Text>
         </View>
       </ScrollView>

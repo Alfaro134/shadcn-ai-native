@@ -4,6 +4,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import type { ChatModel } from "../domain/chat-model";
+import type { ChatTelemetry } from "../domain/telemetry";
 import { ChatSession, type ChatState, type LiveReply } from "./chat-session";
 
 export interface UseChat {
@@ -11,9 +12,12 @@ export interface UseChat {
   readonly state: ChatState;
 }
 
-/** Creates a session for `model` (read once, on mount) and subscribes to its message list. */
-export function useChat(model: ChatModel): UseChat {
-  const [session] = useState(() => new ChatSession(model));
+/**
+ * Creates a session for `model` and `telemetry` (both read once, on mount) and subscribes to its
+ * message list.
+ */
+export function useChat(model: ChatModel, telemetry?: ChatTelemetry): UseChat {
+  const [session] = useState(() => new ChatSession(model, { telemetry }));
   useEffect(() => () => session.dispose(), [session]);
   const state = useSyncExternalStore(session.state.subscribe, session.state.get);
   return { session, state };

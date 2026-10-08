@@ -1,0 +1,32 @@
+name: Bug report
+description: Something renders wrong, jumps, crashes or behaves unexpectedly.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead? Screenshots or a recording help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The steps, and if it's about Markdown, the exact message text (in a code block).
+    validations:
+      required: true
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      placeholder: StreamingChatBubble, DynamicPromptInput, …
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Device or simulator, OS version, Expo SDK, React Native and Reanimated versions, Expo Go or a dev build.
+    validations:
+      required: true
