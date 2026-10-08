@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 a **breaking change** means a prop or behavior you rely on changed: read those entries before
 re-copying a file.
 
-## [1.2.0] - Unreleased
+## [1.2.0] - 2026-10-08
 
 ### Changed
 
@@ -126,5 +126,5 @@ re-copying a file.
 - `StreamingChatBubble`, `CodeBlock`, `DynamicPromptInput` and `ActionChips`, plus the Expo
   example app.
 
-[1.2.0]: https://github.com/Alfaro134/shadcn-ai-native/compare/v1.1.0...HEAD
+[1.2.0]: https://github.com/Alfaro134/shadcn-ai-native/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Alfaro134/shadcn-ai-native/releases/tag/v1.1.0
