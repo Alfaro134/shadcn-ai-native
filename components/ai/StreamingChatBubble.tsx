@@ -256,7 +256,7 @@ function renderInline(nodes: Inline[], ctx: RenderContext, keyPrefix = ""): Reac
         // than a line still wraps, between characters.
         return (
           <Text key={key} className={ctx.cls("inlineCode")}>
-            {` ${node.value.replace(/ /g, " ")} `}
+            {`\u00A0${node.value.replace(/ /g, "\u00A0")}\u00A0`}
           </Text>
         );
       case "link": {
