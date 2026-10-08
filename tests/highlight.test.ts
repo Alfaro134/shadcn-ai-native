@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { highlight, trimTrailingNewlines, type Token } from "../components/ai/highlight.ts";
+import { createStreamingHighlighter, highlight, trimTrailingNewlines, type Token } from "../components/ai/highlight.ts";
 
 /** Compact notation: only colored tokens, as kind:value. */
 const colored = (tokens: Token[]) => tokens.filter((t) => t.kind !== "plain").map((t) => `${t.kind}:${t.value}`);
@@ -81,4 +81,75 @@ describe("highlight: linear time on adversarial input (100k chars, < 300 ms each
       assert.ok(ms < 300, `${ms.toFixed(1)} ms`);
     });
   }
+});
+
+describe("createStreamingHighlighter", () => {
+  /** Flattens chunks and merges neighbors of the same kind, as one highlight() call would. */
+  const merged = (chunks: Token[][]) => {
+    const out: Token[] = [];
+    for (const token of chunks.flat()) {
+      const last = out[out.length - 1];
+      if (last && last.kind === token.kind) out[out.length - 1] = { kind: token.kind, value: last.value + token.value };
+      else out.push({ ...token });
+    }
+    return out;
+  };
+
+  const SAMPLES: Array<[string, string]> = [
+    [
+      "ts",
+      [
+        'import { useState } from "react";',
+        "",
+        "/* block",
+        "   comment */",
+        "export function useDebounce<T>(value: T, delay = 300): T {",
+        "  const [v, setV] = useState(value); // state",
+        "  const s = `multi",
+        "line ${v}`;",
+        "  return 0x1F + 2.5e3;",
+        "}",
+        "",
+      ].join("\n"),
+    ],
+    ["python", ["def f(x):", "    # comment", '    return "a\\"b" if x else None', "", "class Thing:", "    pass", ""].join("\n")],
+    ["bash", ["npm i && echo $HOME # done", "if [ -f x ]; then", "  git status", "fi", ""].join("\n")],
+  ];
+
+  for (const [language, code] of SAMPLES) {
+    test(`${language}: every prefix matches highlight()`, () => {
+      const run = createStreamingHighlighter();
+      for (let end = 1; end <= code.length; end++) {
+        const prefix = code.slice(0, end);
+        assert.deepEqual(merged(run(prefix, language)), highlight(prefix, language), JSON.stringify(prefix));
+      }
+    });
+  }
+
+  test("random code in random chunks matches highlight()", () => {
+    let seed = 11;
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const alphabet = ["/*", "*/", "//", "#", "`", '"', "'", "\\", "\n", "\n\n", " ", "\t", "foo", "Bar", "if", "(", ")", "<T>", "12", ".5", "e3", "x"];
+    const run = createStreamingHighlighter(); // shared: each new snippet must reset it
+    for (let doc = 0; doc < 1500; doc++) {
+      let code = "";
+      const length = Math.floor(random() * 60);
+      for (let k = 0; k < length; k++) code += alphabet[Math.floor(random() * alphabet.length)];
+      const language = ["ts", "python", "bash", "rust"][doc % 4];
+      let end = 0;
+      while (end < code.length) {
+        end = Math.min(code.length, end + 1 + Math.floor(random() * 5));
+        const prefix = code.slice(0, end);
+        assert.deepEqual(merged(run(prefix, language)), highlight(prefix, language), JSON.stringify([language, prefix]));
+      }
+    }
+  });
+
+  test("finished lines come back as the same arrays", () => {
+    const run = createStreamingHighlighter();
+    const first = run("const a = 1;\nconst b", "ts");
+    const second = run("const a = 1;\nconst b = 2;", "ts");
+    assert.equal(second[0], first[0]);
+    assert.equal(second.length, 2);
+  });
 });

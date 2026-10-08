@@ -147,3 +147,62 @@ export function trimTrailingNewlines(value: string): string {
 export function highlight(code: string, language?: string): Token[] {
   return tokenize(code, grammarFor(language));
 }
+
+/**
+ * Returns a highlighter for code that grows by appending, as a streaming code block does. Each
+ * call returns the tokens of `highlight(code, language)` split into chunks: every chunk but the
+ * last ends at a line break and can't change any more, and comes back as the same array on later
+ * calls, so a renderer can memoize it. Only the last chunk is re-tokenized, which keeps streaming
+ * a long block linear in total instead of quadratic.
+ *
+ * Why a line break is a safe cut: it is plain only if no token covers it, and the only tokens that
+ * can cover one (block comments, template strings) run to the end of the input while unclosed.
+ * Nothing else looks past a line break, so the tokens before it are final.
+ */
+export function createStreamingHighlighter(): (code: string, language?: string) => Token[][] {
+  let grammar: Grammar | null = null;
+  let settledCode = "";
+  let chunks: Token[][] = [];
+  let last: { code: string; grammar: Grammar; result: Token[][] } | null = null;
+
+  return (code, language) => {
+    const next = grammarFor(language);
+    if (last && last.code === code && last.grammar === next) return last.result;
+    if (next !== grammar || !code.startsWith(settledCode)) {
+      grammar = next;
+      settledCode = "";
+      chunks = [];
+    }
+
+    const tail = tokenize(code.slice(settledCode.length), next);
+    // Cut after the last line break that sits in a plain token.
+    let cutToken = -1;
+    let cutAt = -1;
+    let settledLength = settledCode.length;
+    let length = settledLength;
+    for (let k = 0; k < tail.length; k++) {
+      const { kind, value } = tail[k];
+      const newline = kind === "plain" ? value.lastIndexOf("\n") : -1;
+      if (newline !== -1) {
+        cutToken = k;
+        cutAt = newline + 1;
+        settledLength = length + cutAt;
+      }
+      length += value.length;
+    }
+
+    let live = tail;
+    if (cutToken !== -1) {
+      const cut = tail[cutToken];
+      const finished = [...tail.slice(0, cutToken), { kind: "plain" as const, value: cut.value.slice(0, cutAt) }];
+      const rest = cut.value.slice(cutAt);
+      live = rest ? [{ kind: "plain", value: rest }, ...tail.slice(cutToken + 1)] : tail.slice(cutToken + 1);
+      chunks.push(finished);
+      settledCode = code.slice(0, settledLength);
+    }
+
+    const result = [...chunks, live];
+    last = { code, grammar: next, result };
+    return result;
+  };
+}
