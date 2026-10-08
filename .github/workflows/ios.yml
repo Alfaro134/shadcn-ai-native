@@ -3,12 +3,14 @@ name: iOS
 # Builds the example app for the iOS simulator and drives it with Maestro. The screenshots, uploaded
 # as an artifact, are the review: iOS is where streaming layout and the keyboard differ most from
 # Android, and nobody on the project has a Mac.
+#
+# The simulator job is a required check on main, so the workflow runs on every pull request (a
+# path filter would leave the check pending forever on a docs-only change). The `changes` job
+# skips the 25-minute build when no app file changed; a skipped job counts as passing.
 on:
   push:
     branches: [main]
-    paths: ["components/**", "example/**", ".github/workflows/ios.yml"]
   pull_request:
-    paths: ["components/**", "example/**", ".github/workflows/ios.yml"]
   workflow_dispatch:
 
 permissions:
@@ -25,8 +27,36 @@ env:
   OUT: ${{ github.workspace }}/maestro-output
 
 jobs:
+  changes:
+    name: Detect app changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # Manual runs, new branches and unknown bases always build.
+          if [ "$EVENT" = "workflow_dispatch" ] || [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE" HEAD | grep -qE '^(components/|example/|.github/workflows/ios.yml$)'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
   simulator:
     name: Build and drive on an iPhone simulator
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
