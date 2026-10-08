@@ -395,14 +395,14 @@ Tests use Node's built-in runner (Node ≥ 22.18), with no test framework:
 - **Example app use cases:** `ChatSession` (send, stop, regenerate, errors, stale events, a model that throws, telemetry) against a fake model.
 - **Architecture:** the dependency rules in [ARCHITECTURE.md](./ARCHITECTURE.md), checked on every import.
 
-Every pull request must pass lint, tests, benchmarks, the type check, `npm audit` and a dependency review before it can merge into `main`; CodeQL scans the code too. An iOS workflow builds the example for the simulator and drives it with Maestro. There are no visual regression tests yet: UI changes are checked by hand in the example app.
+Every pull request must pass lint, tests, benchmarks, the type check, `npm audit` and a dependency review before it can merge into `main`; CodeQL scans the code too. Pull requests that touch the kit or the example must also pass an iOS workflow that builds the example for the simulator and drives it with Maestro, in light and dark mode. There are no visual regression tests yet: UI changes are checked by hand in the example app.
 
 ## Compatibility
 
 | Setup | Status |
 | --- | --- |
 | Expo SDK 57 · React Native 0.86.3 (New Architecture) · Reanimated 4.5.1 · NativeWind 4.2 | ✅ Tested on an Android 9 emulator |
-| iOS | ⚠️ Builds and runs in the simulator in CI; the automated flow is still being stabilized, **not tested on a device yet** |
+| iOS | ✅ Every pull request that touches the app is built and driven on an iPhone simulator in CI (light and dark mode). ⚠️ **Not tested on a physical device yet** |
 | Older React Native versions / Old Architecture | ❓ Untested |
 | Expo Go | ✅ No native modules beyond the Expo Go set |
 
